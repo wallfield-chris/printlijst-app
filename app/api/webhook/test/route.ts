@@ -16,7 +16,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const webhookUrl = `${request.nextUrl.origin}/api/webhook`
+    // Gebruik de correcte base URL (NEXTAUTH_URL in productie, of origin in dev)
+    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
+    const webhookUrl = `${baseUrl}/api/webhook`
 
     console.log("🧪 Versturen test webhook naar:", webhookUrl)
     console.log("📦 Test orderUuid:", orderUuid)
