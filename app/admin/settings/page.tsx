@@ -23,6 +23,9 @@ export default function SettingsPage() {
   const [testOrderUuid, setTestOrderUuid] = useState("")
   const [isTestingWebhook, setIsTestingWebhook] = useState(false)
   const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; message: string; details?: any } | null>(null)
+  
+  // Prisma Studio
+  const [isOpeningPrisma, setIsOpeningPrisma] = useState(false)
 
   // Load settings on mount
   useEffect(() => {
@@ -159,6 +162,29 @@ export default function SettingsPage() {
   const handleSaveSettings = () => {
     // TODO: Implementeer opslaan van settings
     alert("Settings opgeslagen!")
+  }
+
+  const openPrismaStudio = async () => {
+    setIsOpeningPrisma(true)
+    try {
+      const response = await fetch("/api/prisma-studio", {
+        method: "POST",
+      })
+
+      const data = await response.json()
+      
+      if (data.success && data.url) {
+        // Open Prisma Studio in a new tab
+        window.open(data.url, "_blank")
+      } else {
+        alert("Kon Prisma Studio niet openen: " + (data.error || "Onbekende fout"))
+      }
+    } catch (error) {
+      console.error("Error opening Prisma Studio:", error)
+      alert("Netwerkfout - kon Prisma Studio niet openen")
+    } finally {
+      setIsOpeningPrisma(false)
+    }
   }
 
   const tabs = [
@@ -328,6 +354,21 @@ export default function SettingsPage() {
                 </label>
                 <button className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
                   Reset Alle Data
+                </button>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Prisma Studio
+                </label>
+                <p className="text-sm text-gray-500 mb-2">
+                  Open Prisma Studio om de database structuur en data te bekijken
+                </p>
+                <button 
+                  onClick={openPrismaStudio}
+                  disabled={isOpeningPrisma}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {isOpeningPrisma ? "Bezig..." : "Open Prisma Studio"}
                 </button>
               </div>
             </div>
