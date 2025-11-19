@@ -13,6 +13,24 @@ const nextConfig: NextConfig = {
       },
     ]
   },
+  async headers() {
+    return [
+      {
+        source: '/prisma-studio/:path*',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'SAMEORIGIN',
+          },
+        ],
+      },
+    ]
+  },
+  experimental: {
+    serverActions: {
+      allowedOrigins: ['localhost:5555'],
+    },
+  },
 };
 
 export default nextConfig;
