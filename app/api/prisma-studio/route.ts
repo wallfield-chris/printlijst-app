@@ -15,16 +15,15 @@ export async function POST(request: Request) {
 
     // Get the Prisma Studio URL from environment
     const baseUrl = process.env.NEXTAUTH_URL || request.headers.get("origin") || "http://localhost:3000"
-    const prismaStudioPort = process.env.PRISMA_STUDIO_PORT || "5555"
     
-    // In production, Prisma Studio runs on the same host but different port
-    const prismaStudioUrl = process.env.PRISMA_STUDIO_URL || `${baseUrl.replace(/:\d+$/, '')}:${prismaStudioPort}`
+    // Use reverse proxy path instead of separate port
+    const prismaStudioUrl = `${baseUrl}/prisma-studio`
     
     return NextResponse.json({
       success: true,
       url: prismaStudioUrl,
       message: "Prisma Studio URL opgehaald",
-      note: "Prisma Studio moet draaien op de server. Zie PRISMA-STUDIO-SETUP.md voor instructies."
+      note: "Prisma Studio draait via reverse proxy op /prisma-studio"
     })
   } catch (error) {
     console.error("Error getting Prisma Studio URL:", error)
