@@ -1,0 +1,144 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("employee") // "admin" of "employee"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions  Session[]
+  printJobs PrintJob[] @relation("CompletedBy")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PrintJob {
+  id               String    @id @default(cuid())
+  
+  // GoedeGepickt identificatie
+  orderUuid        String?   // UUID van de order in GoedeGepickt
+  orderNumber      String    // Order nummer (kan meerdere keren voorkomen bij meerdere producten)
+  productUuid      String?   // UUID van het product in GoedeGepickt
+  
+  // Product informatie
+  productName      String
+  sku              String?   // SKU van het product
+  backfile         String?   // Supplier SKU (backfile)
+  quantity         Int       // Bestelde hoeveelheid
+  pickedQuantity   Int?      // Gepickte hoeveelheid
+  
+  // Order metadata
+  priority         String    @default("normal") // "low", "normal", "high", "urgent"
+  tags             String?   // Comma-separated tags
+  customerName     String?   // Klantnaam
+  notes            String?   // Extra notities
+  
+  // Status & tracking
+  status           String    @default("pending") // "pending", "in_progress", "completed"
+  backorder        Boolean   @default(false)     // Of product in backorder is
+  missingFile      Boolean   @default(false)     // Of printfile ontbreekt
+  
+  // Timestamps
+  receivedAt       DateTime  @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  
+  // Relations
+  completedBy      String?
+  completedByUser  User?     @relation("CompletedBy", fields: [completedBy], references: [id])
+  
+  // Raw data backup
+  webhookData      String?   // JSON string met alle data van GoedeGepickt
+
+  @@index([status])
+  @@index([completedAt])
+  @@index([orderUuid])
+  @@index([orderNumber])
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model TagRule {
+  id        String   @id @default(cuid())
+  field     String   // Welk veld te checken (bijv. "sku")
+  condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
+  value     String   // De waarde om te checken
+  tag       String   // De tag die toegekend moet worden
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([field])
+  @@index([active])
+}
+
+model ExclusionRule {
+  id        String   @id @default(cuid())
+  field     String   // Welk veld te checken (bijv. "sku", "orderNumber", "customerName")
+  condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
+  value     String   // De waarde om te checken
+  reason    String?  // Optionele reden voor exclusion
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([field])
+  @@index([active])
+}
+
+model ListView {
+  id        String   @id @default(cuid())
+  name      String   // Naam van de tab (bijv. "Glas", "Hout")
+  tags      String   // Comma-separated tags om te filteren
+  order     Int      @default(0) // Volgorde van tabs
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+  @@index([order])
+}
+
+model ProductionSpec {
+  id        String   @id @default(cuid())
+  tag       String   @unique // De tag waarvoor deze specs gelden
+  m2        Float?   // M2 oppervlakte die geprint moet worden
+  time      Float?   // Tijd in minuten die het kost om te printen
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tag])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
