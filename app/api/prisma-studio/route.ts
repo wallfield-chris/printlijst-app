@@ -13,17 +13,13 @@ export async function POST(request: Request) {
       )
     }
 
-    // Get the Prisma Studio URL from environment
-    const baseUrl = process.env.NEXTAUTH_URL || request.headers.get("origin") || "http://localhost:3000"
-    
-    // Use reverse proxy path instead of separate port
-    const prismaStudioUrl = `${baseUrl}/prisma-studio`
+    // Use the Kinsta TCP proxy URL for Prisma Studio
+    const prismaStudioUrl = process.env.PRISMA_STUDIO_URL || "http://europe-west4-001.proxy.kinsta.app:30244"
     
     return NextResponse.json({
       success: true,
       url: prismaStudioUrl,
-      message: "Prisma Studio URL opgehaald",
-      note: "Prisma Studio draait via reverse proxy op /prisma-studio"
+      message: "Prisma Studio URL opgehaald"
     })
   } catch (error) {
     console.error("Error getting Prisma Studio URL:", error)
