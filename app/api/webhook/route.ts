@@ -269,7 +269,7 @@ export async function POST(request: NextRequest) {
 
         // Pas tag regels toe op basis van SKU
         const finalTags = await applyTagRules(
-          product.sku, 
+          product.sku ?? null, 
           orderTagsArray.length > 0 ? orderTagsArray.join(", ") : null
         )
 
