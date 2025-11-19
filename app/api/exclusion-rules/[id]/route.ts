@@ -11,7 +11,7 @@ export async function PATCH(
     const body = await request.json()
     const { field, condition, value, reason, active } = body
 
-    const exclusionRule = await prisma.exclusionRule.update(
+    const exclusionRule = await prisma.exclusionRule.update({
       where: { id },
       data: {
         ...(field !== undefined && { field }),
@@ -39,7 +39,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
-    await prisma.exclusionRule.delete(
+    await prisma.exclusionRule.delete({
       where: { id },
     })
 
