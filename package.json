@@ -4,10 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:studio": "concurrently \"next dev\" \"prisma studio --port 5555\"",
     "build": "prisma generate && next build",
     "start": "prisma db push --accept-data-loss && next start",
-    "start:with-studio": "./start-server.sh",
     "studio": "prisma studio --port 5555",
     "lint": "eslint",
     "postinstall": "prisma generate"
