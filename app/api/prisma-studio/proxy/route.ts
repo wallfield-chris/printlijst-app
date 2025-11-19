@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
       return new NextResponse("Unauthorized", { status: 401 })
     }
 
-    // Get the path that should be proxied
+    // Get the full path including query parameters
     const url = new URL(request.url)
     const path = url.pathname.replace('/api/prisma-studio/proxy', '') || '/'
     const search = url.search
@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Accept': request.headers.get('Accept') || '*/*',
         'User-Agent': request.headers.get('User-Agent') || 'Mozilla/5.0',
+        'Accept-Encoding': 'gzip, deflate',
       },
     })
 
@@ -36,42 +37,16 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = response.headers.get('content-type') || ''
+    const buffer = await response.arrayBuffer()
     
-    if (contentType.includes('application/json')) {
-      const data = await response.json()
-      return NextResponse.json(data, { status: response.status })
-    } else if (contentType.includes('text/html')) {
-      let html = await response.text()
-      
-      // Rewrite URLs in the HTML to go through our proxy
-      html = html.replace(/href="\//g, 'href="/api/prisma-studio/proxy/')
-      html = html.replace(/src="\//g, 'src="/api/prisma-studio/proxy/')
-      html = html.replace(/fetch\('\/([^']+)'\)/g, "fetch('/api/prisma-studio/proxy/$1')")
-      html = html.replace(/fetch\("\/([^"]+)"\)/g, 'fetch("/api/prisma-studio/proxy/$1")')
-      
-      return new NextResponse(html, {
-        status: response.status,
-        headers: {
-          'Content-Type': 'text/html',
-        },
-      })
-    } else if (contentType.includes('javascript') || contentType.includes('css')) {
-      const text = await response.text()
-      return new NextResponse(text, {
-        status: response.status,
-        headers: {
-          'Content-Type': contentType,
-        },
-      })
-    } else {
-      const buffer = await response.arrayBuffer()
-      return new NextResponse(buffer, {
-        status: response.status,
-        headers: {
-          'Content-Type': contentType || 'application/octet-stream',
-        },
-      })
-    }
+    // Return response as-is but with proper content type
+    return new NextResponse(buffer, {
+      status: response.status,
+      headers: {
+        'Content-Type': contentType || 'application/octet-stream',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      },
+    })
   } catch (error) {
     console.error("Error proxying to Prisma Studio:", error)
     return new NextResponse(
