@@ -13,7 +13,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // Use the Kinsta TCP proxy URL for Prisma Studio
+    // Use the Kinsta TCP proxy URL for Prisma Studio (HTTP only - no SSL on TCP proxy)
     const prismaStudioUrl = process.env.PRISMA_STUDIO_URL || "http://europe-west4-001.proxy.kinsta.app:30244"
     
     return NextResponse.json({
