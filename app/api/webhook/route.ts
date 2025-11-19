@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
 
         // Check of deze printjob uitgesloten moet worden
         const exclusionCheck = await shouldExclude(
-          product.sku,
+          product.sku ?? null,
           order.externalDisplayId || order.orderNumber || orderUuid,
           order.customerName || null
         )
