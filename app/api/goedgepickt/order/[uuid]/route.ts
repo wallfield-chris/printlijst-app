@@ -5,7 +5,7 @@ import { GoedGepicktAPI } from "@/lib/goedgepickt"
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { uuid: string } }
+  { params }: { params: Promise<{ uuid: string }> }
 ) {
   try {
     const session = await auth()
@@ -14,7 +14,7 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const orderUuid = params.uuid
+    const { uuid: orderUuid } = await params
 
     if (!orderUuid) {
       return NextResponse.json(

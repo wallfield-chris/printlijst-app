@@ -4,14 +4,15 @@ import { prisma } from "@/lib/prisma"
 // PATCH - Update een exclusion rule
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     const { field, condition, value, reason, active } = body
 
-    const exclusionRule = await prisma.exclusionRule.update({
-      where: { id: params.id },
+    const exclusionRule = await prisma.exclusionRule.update(
+      where: { id },
       data: {
         ...(field !== undefined && { field }),
         ...(condition !== undefined && { condition }),
@@ -34,11 +35,12 @@ export async function PATCH(
 // DELETE - Verwijder een exclusion rule
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await prisma.exclusionRule.delete({
-      where: { id: params.id },
+    const { id } = await params
+    await prisma.exclusionRule.delete(
+      where: { id },
     })
 
     return NextResponse.json({ success: true })
