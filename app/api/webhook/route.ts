@@ -292,7 +292,7 @@ export async function POST(request: NextRequest) {
             orderNumber: order.externalDisplayId || order.orderNumber || orderUuid,
             productUuid: product.productUuid,
             productName: product.productName || "Onbekend product",
-            sku: product.sku,
+            sku: product.sku ?? null,
             backfile: supplierSku,
             quantity: product.productQuantity || 1,
             pickedQuantity: product.pickedQuantity || 0,
