@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     // Check if user is authenticated and is admin
     const session = await getServerSession(authOptions)
@@ -14,13 +14,18 @@ export async function POST() {
       )
     }
 
-    // Get the Prisma Studio URL from environment or use default
-    const prismaStudioUrl = process.env.PRISMA_STUDIO_URL || "http://localhost:5555"
+    // Get the Prisma Studio URL from environment
+    const baseUrl = process.env.NEXTAUTH_URL || request.headers.get("origin") || "http://localhost:3000"
+    const prismaStudioPort = process.env.PRISMA_STUDIO_PORT || "5555"
+    
+    // In production, Prisma Studio runs on the same host but different port
+    const prismaStudioUrl = process.env.PRISMA_STUDIO_URL || `${baseUrl.replace(/:\d+$/, '')}:${prismaStudioPort}`
     
     return NextResponse.json({
       success: true,
       url: prismaStudioUrl,
-      message: "Prisma Studio URL opgehaald"
+      message: "Prisma Studio URL opgehaald",
+      note: "Prisma Studio moet draaien op de server. Zie PRISMA-STUDIO-SETUP.md voor instructies."
     })
   } catch (error) {
     console.error("Error getting Prisma Studio URL:", error)
