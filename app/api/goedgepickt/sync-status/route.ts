@@ -37,10 +37,14 @@ export async function POST(request: NextRequest) {
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
     // Haal alle printjobs op die een orderUuid hebben
+    // Skip orders die al completed of cancelled zijn
     const printJobs = await prisma.printJob.findMany({
       where: {
         orderUuid: {
           not: null
+        },
+        orderStatus: {
+          notIn: ['completed', 'cancelled']
         }
       },
       select: {
@@ -97,8 +101,18 @@ export async function POST(request: NextRequest) {
             return
           }
 
-          // Haal alle printjobs voor deze order op
+          // Skip als de nieuwe status completed of cancelled is en we al die status hebben
           const jobsForOrder = printJobs.filter(job => job.orderUuid === orderUuid)
+          
+          // Check of een van de jobs al completed of cancelled is
+          const hasCompletedOrCancelledStatus = jobsForOrder.some(job => 
+            job.orderStatus === 'completed' || job.orderStatus === 'cancelled'
+          )
+          
+          if (hasCompletedOrCancelledStatus && (newOrderStatus === 'completed' || newOrderStatus === 'cancelled')) {
+            console.log(`⏭️  Skipping order ${orderUuid} - already has final status`)
+            return
+          }
           
           // Check of status update nodig is
           const needsUpdate = jobsForOrder.some(job => job.orderStatus !== newOrderStatus)
