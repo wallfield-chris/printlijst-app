@@ -23,6 +23,10 @@ export default function SettingsPage() {
   const [testOrderUuid, setTestOrderUuid] = useState("")
   const [isTestingWebhook, setIsTestingWebhook] = useState(false)
   const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; message: string; details?: any } | null>(null)
+  
+  // OrderStatus sync
+  const [isSyncingStatus, setIsSyncingStatus] = useState(false)
+  const [syncStatusResult, setSyncStatusResult] = useState<{ success: boolean; message: string; details?: any } | null>(null)
 
   // Load settings on mount
   useEffect(() => {
@@ -153,6 +157,54 @@ export default function SettingsPage() {
       })
     } finally {
       setIsTestingWebhook(false)
+    }
+  }
+
+  const syncOrderStatus = async () => {
+    if (!apiKey.trim()) {
+      setSyncStatusResult({ 
+        success: false, 
+        message: "Configureer eerst je API key" 
+      })
+      return
+    }
+
+    setIsSyncingStatus(true)
+    setSyncStatusResult(null)
+
+    try {
+      const response = await fetch("/api/goedgepickt/sync-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+
+      const data = await response.json()
+      
+      if (data.success) {
+        setSyncStatusResult({ 
+          success: true, 
+          message: data.message,
+          details: {
+            totalPrintJobs: data.totalPrintJobs,
+            uniqueOrders: data.uniqueOrders,
+            updated: data.updated,
+            errors: data.errors,
+            errorDetails: data.errorDetails
+          }
+        })
+      } else {
+        setSyncStatusResult({ 
+          success: false, 
+          message: data.error || "OrderStatus sync gefaald"
+        })
+      }
+    } catch (error) {
+      setSyncStatusResult({ 
+        success: false, 
+        message: "Netwerkfout - kon OrderStatus sync niet uitvoeren" 
+      })
+    } finally {
+      setIsSyncingStatus(false)
     }
   }
 
@@ -444,8 +496,45 @@ export default function SettingsPage() {
                 </div>
               )}
 
+              {/* Sync OrderStatus Result */}
+              {syncStatusResult && (
+                <div className={`p-4 rounded-lg text-sm ${
+                  syncStatusResult.success 
+                    ? "bg-green-50 border border-green-200" 
+                    : "bg-red-50 border border-red-200"
+                }`}>
+                  <div className={`font-semibold mb-2 ${
+                    syncStatusResult.success ? "text-green-900" : "text-red-900"
+                  }`}>
+                    {syncStatusResult.success ? "✅ " : "❌ "}
+                    {syncStatusResult.message}
+                  </div>
+                  
+                  {syncStatusResult.success && syncStatusResult.details && (
+                    <div className="text-green-800 text-xs space-y-1">
+                      <div>📦 Totaal printjobs: {syncStatusResult.details.totalPrintJobs}</div>
+                      <div>🔍 Unieke orders gecontroleerd: {syncStatusResult.details.uniqueOrders}</div>
+                      <div>🔄 Printjobs ge-update: {syncStatusResult.details.updated}</div>
+                      {syncStatusResult.details.errors > 0 && (
+                        <div>❌ Errors: {syncStatusResult.details.errors}</div>
+                      )}
+                      {syncStatusResult.details.errorDetails && syncStatusResult.details.errorDetails.length > 0 && (
+                        <div className="mt-2">
+                          <div className="font-semibold">Eerste errors:</div>
+                          <ul className="list-disc list-inside ml-2">
+                            {syncStatusResult.details.errorDetails.slice(0, 3).map((error: string, idx: number) => (
+                              <li key={idx}>{error}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
-              <div className="pt-4 flex gap-3">
+              <div className="pt-4 flex gap-3 flex-wrap">
                 <button 
                   onClick={saveApiKey}
                   disabled={isSaving || !apiKey.trim()}
@@ -459,6 +548,13 @@ export default function SettingsPage() {
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
                 >
                   {isTesting ? "Testen..." : "Test Connectie"}
+                </button>
+                <button 
+                  onClick={syncOrderStatus}
+                  disabled={isSyncingStatus || !apiKey.trim()}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                >
+                  {isSyncingStatus ? "Bezig..." : "Sync OrderStatus"}
                 </button>
               </div>
 
