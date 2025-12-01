@@ -37,14 +37,16 @@ export async function POST(request: NextRequest) {
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
     // Haal alle printjobs op die een orderUuid hebben
-    // Skip orders die al completed of cancelled zijn
+    // Skip alleen orders die al completed of cancelled zijn (niet null)
     const printJobs = await prisma.printJob.findMany({
       where: {
         orderUuid: {
           not: null
         },
-        orderStatus: {
-          notIn: ['completed', 'cancelled']
+        NOT: {
+          orderStatus: {
+            in: ['completed', 'cancelled']
+          }
         }
       },
       select: {
