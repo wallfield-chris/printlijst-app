@@ -55,12 +55,20 @@ export async function POST(request: NextRequest) {
       },
       select: {
         orderUuid: true,
+        orderStatus: true,
       },
       distinct: ['orderUuid']
     })
     
-    const orderUuids = ordersToSync.map(job => job.orderUuid).filter(Boolean) as string[]
-    console.log(`📦 Found ${orderUuids.length} unique orders to sync`)
+    // Sorteer zodat orders met null status als eerst komen
+    const sortedOrders = ordersToSync.sort((a, b) => {
+      if (a.orderStatus === null && b.orderStatus !== null) return -1
+      if (a.orderStatus !== null && b.orderStatus === null) return 1
+      return 0
+    })
+    
+    const orderUuids = sortedOrders.map(job => job.orderUuid).filter(Boolean) as string[]
+    console.log(`📦 Found ${orderUuids.length} unique orders to sync (null status prioritized)`)
 
     if (orderUuids.length === 0) {
       return NextResponse.json({
