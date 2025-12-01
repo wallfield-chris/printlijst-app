@@ -153,21 +153,6 @@ export async function POST(request: NextRequest) {
       where: { orderUuid },
     })
 
-    if (existingJobs.length > 0) {
-      console.log(`⚠️  Order ${orderUuid} is al geïmporteerd (${existingJobs.length} printjobs)`)
-      return NextResponse.json({
-        success: true,
-        message: "Order was al geïmporteerd",
-        duplicate: true,
-        existingJobs: existingJobs.length,
-        printJobs: existingJobs.map(job => ({
-          id: job.id,
-          productName: job.productName,
-          status: job.status,
-        }))
-      }, { status: 200 })
-    }
-
     // Haal API key op uit settings
     const apiKeySetting = await prisma.setting.findUnique({
       where: { key: "goedgepickt_api_key" },
@@ -200,6 +185,49 @@ export async function POST(request: NextRequest) {
         },
         { status: 404 }
       )
+    }
+
+    // Extract order status from order data
+    const orderStatus = order.status || body.status || null
+    console.log(`📊 Order status: ${orderStatus}`)
+
+    // Check of we bestaande printjobs moeten updaten met nieuwe order status
+    if (existingJobs.length > 0) {
+      let updatedJobs = 0
+      
+      if (orderStatus) {
+        // Check of de status is veranderd
+        const jobsWithDifferentStatus = existingJobs.filter(job => job.orderStatus !== orderStatus)
+        
+        if (jobsWithDifferentStatus.length > 0) {
+          console.log(`🔄 Updating order status voor ${jobsWithDifferentStatus.length} printjobs: ${jobsWithDifferentStatus[0].orderStatus || 'null'} → ${orderStatus}`)
+          
+          // Update alle printjobs van deze order met nieuwe status
+          const updateResult = await prisma.printJob.updateMany({
+            where: { orderUuid },
+            data: { orderStatus }
+          })
+          
+          updatedJobs = updateResult.count
+        }
+      }
+
+      console.log(`⚠️  Order ${orderUuid} was al geïmporteerd (${existingJobs.length} printjobs)${updatedJobs > 0 ? `, ${updatedJobs} printjobs ge-updated met nieuwe status` : ''}`)
+      
+      return NextResponse.json({
+        success: true,
+        message: existingJobs.length > 0 ? (updatedJobs > 0 ? "Order status updated" : "Order was al geïmporteerd") : "Order imported",
+        duplicate: existingJobs.length > 0,
+        existingJobs: existingJobs.length,
+        updatedJobs,
+        orderStatus,
+        printJobs: existingJobs.map(job => ({
+          id: job.id,
+          productName: job.productName,
+          status: job.status,
+          orderStatus: updatedJobs > 0 ? orderStatus : job.orderStatus,
+        }))
+      }, { status: 200 })
     }
 
     const createdJobs = []
@@ -298,6 +326,7 @@ export async function POST(request: NextRequest) {
             pickedQuantity: product.pickedQuantity || 0,
             priority,
             tags: finalTags || null,
+            orderStatus,
             customerName: order.customer?.name || order.customerName,
             notes: order.notes,
             status: "pending",
