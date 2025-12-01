@@ -36,42 +36,40 @@ export async function POST(request: NextRequest) {
     // Initialiseer GoedGepickt API client
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
-    // Haal alle printjobs op die een orderUuid hebben
-    // Skip alleen orders die al completed of cancelled zijn (niet null)
-    const printJobs = await prisma.printJob.findMany({
+    // Haal alle unieke orderUuids op die gesynchroniseerd moeten worden
+    // We gebruiken hier distinct op orderUuid om duplicaten te vermijden
+    const ordersToSync = await prisma.printJob.findMany({
       where: {
         orderUuid: {
           not: null
         },
-        NOT: {
-          orderStatus: {
-            in: ['completed', 'cancelled']
+        OR: [
+          { orderStatus: null },  // Printjobs zonder status
+          { 
+            AND: [
+              { orderStatus: { not: null } },
+              { orderStatus: { notIn: ['completed', 'cancelled'] } }
+            ]
           }
-        }
+        ]
       },
       select: {
-        id: true,
         orderUuid: true,
-        orderStatus: true,
-        productName: true,
-        orderNumber: true
-      }
+      },
+      distinct: ['orderUuid']
     })
+    
+    const orderUuids = ordersToSync.map(job => job.orderUuid).filter(Boolean) as string[]
+    console.log(`📦 Found ${orderUuids.length} unique orders to sync`)
 
-    console.log(`📦 Found ${printJobs.length} printjobs with orderUuid`)
-
-    if (printJobs.length === 0) {
+    if (orderUuids.length === 0) {
       return NextResponse.json({
         success: true,
-        message: "Geen printjobs gevonden om te synchroniseren",
+        message: "Geen orders gevonden om te synchroniseren",
         updated: 0,
         errors: 0
       })
     }
-
-    // Groepeer printjobs per orderUuid om duplicaat API calls te voorkomen
-    const orderUuids = [...new Set(printJobs.map(job => job.orderUuid).filter(Boolean))] as string[]
-    console.log(`🔍 Checking ${orderUuids.length} unique orders...`)
 
     let updatedCount = 0
     let errorCount = 0
@@ -105,28 +103,28 @@ export async function POST(request: NextRequest) {
             return
           }
 
-          // Skip als de nieuwe status completed of cancelled is en we al die status hebben
-          const jobsForOrder = printJobs.filter(job => job.orderUuid === orderUuid)
-          console.log(`   📋 Order ${orderUuid} heeft ${jobsForOrder.length} printjobs met huidige status: ${jobsForOrder[0]?.orderStatus || 'null'}`)
+          // Check hoeveel printjobs deze order heeft
+          const jobCount = await prisma.printJob.count({
+            where: { orderUuid }
+          })
+          console.log(`   📋 Order ${orderUuid} heeft ${jobCount} printjobs`)
           
-          // Check of een van de jobs al completed of cancelled is
-          const hasCompletedOrCancelledStatus = jobsForOrder.some(job => 
-            job.orderStatus === 'completed' || job.orderStatus === 'cancelled'
-          )
-          
-          if (hasCompletedOrCancelledStatus && (newOrderStatus === 'completed' || newOrderStatus === 'cancelled')) {
-            console.log(`⏭️  Skipping order ${orderUuid} - already has final status`)
-            return
-          }
-          
-          // Update ALLE printjobs voor deze order (niet alleen die in de gefilterde lijst)
-          // Dit zorgt ervoor dat ook jobs die we niet in de initiële query hebben meegenomen worden geüpdatet
-          console.log(`🔄 Updating all printjobs for order ${orderUuid} to status: ${newOrderStatus}`)
+          // Update ALLE printjobs voor deze order naar de nieuwe status
+          // Maar skip jobs die al completed of cancelled zijn (finale statussen)
+          console.log(`🔄 Updating printjobs for order ${orderUuid} to status: ${newOrderStatus}`)
           
           const updateResult = await prisma.printJob.updateMany({
             where: { 
               orderUuid,
-              NOT: { orderStatus: { in: ['completed', 'cancelled'] } } // Laat completed/cancelled jobs intact
+              OR: [
+                { orderStatus: null },  // Update jobs zonder status
+                { 
+                  AND: [
+                    { orderStatus: { not: null } },
+                    { orderStatus: { notIn: ['completed', 'cancelled'] } }  // Skip finale statussen
+                  ]
+                }
+              ]
             },
             data: { orderStatus: newOrderStatus }
           })
@@ -157,7 +155,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `OrderStatus sync voltooid in ${Math.round(duration / 1000)}s`,
-      totalPrintJobs: printJobs.length,
       uniqueOrders: orderUuids.length,
       updated: updatedCount,
       errors: errorCount,
