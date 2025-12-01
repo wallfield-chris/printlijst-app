@@ -100,11 +100,14 @@ export async function POST(request: NextRequest) {
           
           if (!newOrderStatus) {
             console.warn(`⚠️  Geen status gevonden voor order ${orderUuid}`)
+            errors.push(`Geen status voor order ${orderUuid}`)
+            errorCount++
             return
           }
 
           // Skip als de nieuwe status completed of cancelled is en we al die status hebben
           const jobsForOrder = printJobs.filter(job => job.orderUuid === orderUuid)
+          console.log(`   📋 Order ${orderUuid} heeft ${jobsForOrder.length} printjobs met huidige status: ${jobsForOrder[0]?.orderStatus || 'null'}`)
           
           // Check of een van de jobs al completed of cancelled is
           const hasCompletedOrCancelledStatus = jobsForOrder.some(job => 
@@ -116,21 +119,23 @@ export async function POST(request: NextRequest) {
             return
           }
           
-          // Check of status update nodig is
-          const needsUpdate = jobsForOrder.some(job => job.orderStatus !== newOrderStatus)
+          // Update ALLE printjobs voor deze order (niet alleen die in de gefilterde lijst)
+          // Dit zorgt ervoor dat ook jobs die we niet in de initiële query hebben meegenomen worden geüpdatet
+          console.log(`🔄 Updating all printjobs for order ${orderUuid} to status: ${newOrderStatus}`)
           
-          if (needsUpdate) {
-            console.log(`🔄 Updating ${jobsForOrder.length} printjobs: ${jobsForOrder[0].orderStatus || 'null'} → ${newOrderStatus}`)
-            
-            // Update alle printjobs voor deze order
-            const updateResult = await prisma.printJob.updateMany({
-              where: { orderUuid },
-              data: { orderStatus: newOrderStatus }
-            })
-            
+          const updateResult = await prisma.printJob.updateMany({
+            where: { 
+              orderUuid,
+              NOT: { orderStatus: { in: ['completed', 'cancelled'] } } // Laat completed/cancelled jobs intact
+            },
+            data: { orderStatus: newOrderStatus }
+          })
+          
+          if (updateResult.count > 0) {
+            console.log(`   ✅ Updated ${updateResult.count} printjobs`)
             updatedCount += updateResult.count
           } else {
-            console.log(`✅ Order ${orderUuid} status already up to date (${newOrderStatus})`)
+            console.log(`   ℹ️  No printjobs needed update (already correct status)`)
           }
 
         } catch (error) {
