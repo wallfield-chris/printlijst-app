@@ -29,6 +29,20 @@ interface ExclusionRule {
   updatedAt: string
 }
 
+interface PriorityRule {
+  id: string
+  field: string
+  condition: string
+  value: string
+  priority: string
+  operator?: string
+  ruleGroup?: string
+  scope?: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 interface RuleCondition {
   field: string
   condition: string
@@ -46,8 +60,9 @@ interface ProductionSpec {
 }
 
 export default function TagsPage() {
-  const [activeTab, setActiveTab] = useState<"tags" | "exclusions" | "specs">("tags")
+  const [activeTab, setActiveTab] = useState<"tags" | "priority" | "exclusions" | "specs">("tags")
   const [tagRules, setTagRules] = useState<TagRule[]>([])
+  const [priorityRules, setPriorityRules] = useState<PriorityRule[]>([])
   const [exclusionRules, setExclusionRules] = useState<ExclusionRule[]>([])
   const [productionSpecs, setProductionSpecs] = useState<ProductionSpec[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,6 +73,7 @@ export default function TagsPage() {
     { field: "sku", condition: "starts_with", value: "", operator: "AND" }
   ])
   const [tag, setTag] = useState("")
+  const [priority, setPriority] = useState("normal")
   const [scope, setScope] = useState<"product" | "order">("product")
   const [reason, setReason] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -71,6 +87,7 @@ export default function TagsPage() {
 
   useEffect(() => {
     fetchTagRules()
+    fetchPriorityRules()
     fetchExclusionRules()
     fetchProductionSpecs()
   }, [])
@@ -86,6 +103,18 @@ export default function TagsPage() {
       console.error("Error fetching tag rules:", error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchPriorityRules = async () => {
+    try {
+      const response = await fetch("/api/priority-rules")
+      if (response.ok) {
+        const data = await response.json()
+        setPriorityRules(data)
+      }
+    } catch (error) {
+      console.error("Error fetching priority rules:", error)
     }
   }
 
@@ -556,6 +585,16 @@ export default function TagsPage() {
             Tags
           </button>
           <button
+            onClick={() => setActiveTab("priority")}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === "priority"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            Priority
+          </button>
+          <button
             onClick={() => setActiveTab("exclusions")}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === "exclusions"
@@ -931,6 +970,272 @@ export default function TagsPage() {
           </div>
         )}
       </div>
+        </>
+      )}
+
+      {/* Priority Tab Content */}
+      {activeTab === "priority" && (
+        <>
+          {/* Add New Priority Rule Button */}
+          {!showAddForm && (
+            <div className="mb-6">
+              <button
+                onClick={() => setShowAddForm(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Nieuwe Priority Regel
+              </button>
+            </div>
+          )}
+
+          {/* Priority Rules List */}
+          {!showAddForm && (
+            <div className="bg-white rounded-lg shadow">
+              <div className="p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Priority Regels</h2>
+                {priorityRules.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    Nog geen priority regels aangemaakt
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {priorityRules.map((rule) => (
+                      <div key={rule.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-600">
+                              Als <span className="font-medium">{rule.field}</span>
+                              {' '}{rule.condition === 'starts_with' ? 'begint met' : rule.condition === 'ends_with' ? 'eindigt met' : rule.condition === 'contains' ? 'bevat' : 'is gelijk aan'}{' '}
+                              <span className="font-medium">"{rule.value}"</span>
+                            </span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              rule.priority === 'urgent' ? 'bg-red-100 text-red-800' :
+                              rule.priority === 'high' ? 'bg-orange-100 text-orange-800' :
+                              rule.priority === 'normal' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {rule.priority.toUpperCase()}
+                            </span>
+                            {rule.scope === 'order' && (
+                              <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                                📦 Hele Order
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (confirm('Weet je zeker dat je deze regel wilt verwijderen?')) {
+                                await fetch(`/api/priority-rules/${rule.id}`, { method: 'DELETE' })
+                                fetchPriorityRules()
+                              }
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Add/Edit Priority Rule Form */}
+          {showAddForm && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Nieuwe Priority Regel
+              </h2>
+              
+              <form onSubmit={async (e) => {
+                e.preventDefault()
+                try {
+                  for (const cond of conditions) {
+                    if (!cond.value.trim()) continue
+                    
+                    await fetch("/api/priority-rules", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        field: cond.field,
+                        condition: cond.condition,
+                        value: cond.value,
+                        operator: cond.operator || "AND",
+                        scope: scope,
+                        priority: priority,
+                        active: true
+                      }),
+                    })
+                  }
+                  
+                  await fetchPriorityRules()
+                  setShowAddForm(false)
+                  setConditions([{ field: "sku", condition: "starts_with", value: "", operator: "AND" }])
+                  setPriority("normal")
+                  setScope("product")
+                } catch (error) {
+                  console.error("Error saving priority rule:", error)
+                  alert("Er is een fout opgetreden bij het opslaan")
+                }
+              }} className="space-y-4">
+                {conditions.map((cond, index) => (
+                  <div key={index} className="border border-gray-200 rounded-lg p-4 space-y-4">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Veld</label>
+                        <select
+                          value={cond.field}
+                          onChange={(e) => updateCondition(index, 'field', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          required
+                        >
+                          <option value="sku">SKU</option>
+                          <option value="orderStatus">Order Status</option>
+                          <option value="customerName">Klant Naam</option>
+                          <option value="backfile">Backfile</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Conditie</label>
+                        <select
+                          value={cond.condition}
+                          onChange={(e) => updateCondition(index, 'condition', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          required
+                        >
+                          <option value="starts_with">Begint met</option>
+                          <option value="ends_with">Eindigt met</option>
+                          <option value="contains">Bevat</option>
+                          <option value="equals">Is gelijk aan</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Waarde</label>
+                        <input
+                          type="text"
+                          value={cond.value}
+                          onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                          placeholder="Bijv. SHIPPING-"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {index < conditions.length - 1 && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Operator voor volgende conditie</label>
+                        <select
+                          value={cond.operator}
+                          onChange={(e) => updateCondition(index, 'operator', e.target.value)}
+                          className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="AND">EN</option>
+                          <option value="OR">OF</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {conditions.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeCondition(index)}
+                        className="text-sm text-red-600 hover:text-red-700"
+                      >
+                        Conditie verwijderen
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={addCondition}
+                  className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Conditie toevoegen
+                </button>
+
+                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                    <select
+                      value={priority}
+                      onChange={(e) => setPriority(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      required
+                    >
+                      <option value="low">Low</option>
+                      <option value="normal">Normal</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Scope</label>
+                    <div className="flex gap-4 mt-2">
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          value="product"
+                          checked={scope === "product"}
+                          onChange={(e) => setScope(e.target.value as "product" | "order")}
+                          className="mr-2"
+                        />
+                        <span className="text-sm text-gray-700">Product</span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          value="order"
+                          checked={scope === "order"}
+                          onChange={(e) => setScope(e.target.value as "product" | "order")}
+                          className="mr-2"
+                        />
+                        <span className="text-sm text-gray-700">Hele Order</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Opslaan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddForm(false)
+                      setConditions([{ field: "sku", condition: "starts_with", value: "", operator: "AND" }])
+                      setPriority("normal")
+                      setScope("product")
+                    }}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Annuleren
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </>
       )}
 

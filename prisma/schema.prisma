@@ -102,6 +102,24 @@ model TagRule {
   @@index([ruleGroup])
 }
 
+model PriorityRule {
+  id        String   @id @default(cuid())
+  field     String   // Welk veld te checken (bijv. "sku", "orderStatus", "customerName")
+  condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
+  value     String   // De waarde om te checken
+  priority  String   // De priority die toegekend moet worden ("low", "normal", "high", "urgent")
+  operator  String   @default("AND") // Operator voor volgende conditie ("AND", "OR")
+  ruleGroup String?  // Groepeer meerdere condities samen (zelfde ID = 1 regel)
+  scope     String   @default("product") // "product" = alleen dit product, "order" = hele order
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([field])
+  @@index([active])
+  @@index([ruleGroup])
+}
+
 model ExclusionRule {
   id        String   @id @default(cuid())
   field     String   // Welk veld te checken (bijv. "sku", "orderNumber", "customerName", "orderStatus")
