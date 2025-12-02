@@ -271,7 +271,6 @@ export async function POST(request: NextRequest) {
         updatedJobs,
         orderStatus,
         event: webhookEvent,
-        orderStatus,
         printJobs: existingJobs.map(job => ({
           id: job.id,
           productName: job.productName,
