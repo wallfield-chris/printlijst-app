@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { GoedGepicktAPI } from "@/lib/goedgepickt"
+import { webhookLogger } from "@/lib/webhook-logger"
 
 /**
  * Webhook endpoint voor GoedeGepickt
@@ -138,6 +139,10 @@ export async function POST(request: NextRequest) {
 
     if (!orderUuid) {
       console.error("❌ Geen orderUuid gevonden in webhook")
+      
+      // Log to debug system
+      webhookLogger.log(undefined, undefined, body)
+      
       return NextResponse.json(
         { 
           success: false,
@@ -147,6 +152,12 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+    
+    // Check debug mode setting
+    const debugModeSetting = await prisma.setting.findUnique({
+      where: { key: "webhook_debug_mode" }
+    })
+    const debugMode = debugModeSetting?.value === "true"
 
     // Check of deze order al eerder is geïmporteerd
     const existingJobs = await prisma.printJob.findMany({
@@ -178,6 +189,12 @@ export async function POST(request: NextRequest) {
 
     if (!order) {
       console.error(`❌ Order ${orderUuid} niet gevonden in GoedGepickt`)
+      
+      // Log to debug system if enabled
+      if (debugMode) {
+        webhookLogger.log(orderUuid, undefined, body)
+      }
+      
       return NextResponse.json(
         { 
           success: false,
@@ -190,6 +207,11 @@ export async function POST(request: NextRequest) {
     // Extract order status from order data
     const orderStatus = order.status || body.status || null
     console.log(`📊 Order status: ${orderStatus}`)
+    
+    // Log to debug system if enabled
+    if (debugMode) {
+      webhookLogger.log(orderUuid, orderStatus || undefined, body)
+    }
 
     // Check of we bestaande printjobs moeten updaten met nieuwe order status
     if (existingJobs.length > 0) {

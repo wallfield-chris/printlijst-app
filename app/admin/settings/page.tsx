@@ -27,6 +27,10 @@ export default function SettingsPage() {
   // OrderStatus sync
   const [isSyncingStatus, setIsSyncingStatus] = useState(false)
   const [syncStatusResult, setSyncStatusResult] = useState<{ success: boolean; message: string; details?: any } | null>(null)
+  
+  // Debug mode
+  const [debugMode, setDebugMode] = useState(false)
+  const [webhookLogs, setWebhookLogs] = useState<any[]>([])
 
   // Load settings on mount
   useEffect(() => {
@@ -41,9 +45,65 @@ export default function SettingsPage() {
         if (settings.goedgepickt_api_key) {
           setApiKey(settings.goedgepickt_api_key)
         }
+        if (settings.webhook_debug_mode) {
+          setDebugMode(settings.webhook_debug_mode === "true")
+        }
       }
     } catch (error) {
       console.error("Error loading settings:", error)
+    }
+  }
+  
+  const toggleDebugMode = async (enabled: boolean) => {
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "webhook_debug_mode", value: enabled.toString() }),
+      })
+
+      if (response.ok) {
+        setDebugMode(enabled)
+        if (!enabled) {
+          setWebhookLogs([])
+        }
+      }
+    } catch (error) {
+      console.error("Error toggling debug mode:", error)
+    }
+  }
+  
+  // Subscribe to webhook logs when debug mode is enabled
+  useEffect(() => {
+    if (!debugMode) return
+
+    const eventSource = new EventSource('/api/webhook-logs')
+
+    eventSource.addEventListener('message', (event) => {
+      const data = JSON.parse(event.data)
+      
+      if (data.type === 'initial') {
+        setWebhookLogs(data.logs)
+      } else if (data.type === 'new') {
+        setWebhookLogs(prev => [...prev, data.log].slice(-50)) // Keep last 50
+      }
+    })
+
+    eventSource.onerror = () => {
+      eventSource.close()
+    }
+
+    return () => {
+      eventSource.close()
+    }
+  }, [debugMode])
+  
+  const clearWebhookLogs = async () => {
+    try {
+      await fetch('/api/webhook-logs', { method: 'POST' })
+      setWebhookLogs([])
+    } catch (error) {
+      console.error("Error clearing logs:", error)
     }
   }
 
@@ -556,6 +616,84 @@ export default function SettingsPage() {
                 >
                   {isSyncingStatus ? "Bezig..." : "Sync OrderStatus"}
                 </button>
+              </div>
+
+              {/* Debug Mode Section */}
+              <div className="pt-6 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900">🐛 Debug Modus</h3>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Bekijk binnenkomende webhooks in realtime
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={debugMode}
+                      onChange={(e) => toggleDebugMode(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                {/* Webhook Logs */}
+                {debugMode && (
+                  <div className="mt-4 space-y-2">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs text-gray-500">
+                        Live webhook logs ({webhookLogs.length}/50)
+                      </span>
+                      {webhookLogs.length > 0 && (
+                        <button
+                          onClick={clearWebhookLogs}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Wis logs
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="bg-gray-900 rounded-lg p-4 max-h-96 overflow-y-auto font-mono text-xs">
+                      {webhookLogs.length === 0 ? (
+                        <div className="text-gray-500 text-center py-8">
+                          Wachten op webhooks...
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {webhookLogs.map((log, index) => (
+                            <div key={index} className="border-b border-gray-700 pb-3 last:border-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-green-400">
+                                  {new Date(log.timestamp).toLocaleTimeString('nl-NL')}
+                                </span>
+                                {log.orderUuid && (
+                                  <span className="text-blue-400 text-[10px]">
+                                    {log.orderUuid}
+                                  </span>
+                                )}
+                              </div>
+                              {log.status && (
+                                <div className="text-yellow-400 mb-1">
+                                  Status: {log.status}
+                                </div>
+                              )}
+                              <details className="cursor-pointer">
+                                <summary className="text-gray-400 hover:text-gray-300">
+                                  Payload ▼
+                                </summary>
+                                <pre className="mt-2 text-gray-300 text-[10px] overflow-x-auto">
+                                  {JSON.stringify(log.payload, null, 2)}
+                                </pre>
+                              </details>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Webhook Test Section */}
