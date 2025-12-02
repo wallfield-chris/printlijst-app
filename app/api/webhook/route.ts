@@ -12,7 +12,8 @@ import { webhookLogger } from "@/lib/webhook-logger"
 async function shouldExclude(
   sku: string | null, 
   orderNumber: string, 
-  customerName: string | null
+  customerName: string | null,
+  orderStatus: string | null
 ): Promise<{ excluded: boolean; reason?: string }> {
   // Haal actieve exclusion regels op
   const exclusionRules = await prisma.exclusionRule.findMany({
@@ -33,6 +34,9 @@ async function shouldExclude(
         break
       case "customerName":
         fieldValue = customerName
+        break
+      case "orderStatus":
+        fieldValue = orderStatus
         break
     }
 
@@ -64,14 +68,16 @@ async function shouldExclude(
 }
 
 // Helper functie om tags toe te kennen op basis van tag regels
-async function applyTagRules(sku: string | null, existingTags: string | null): Promise<string> {
-  if (!sku) return existingTags || ""
-
-  // Haal actieve tag regels op
+async function applyTagRules(
+  sku: string | null, 
+  orderStatus: string | null,
+  existingTags: string | null
+): Promise<string> {
+  // Haal actieve tag regels op voor SKU en orderStatus
   const tagRules = await prisma.tagRule.findMany({
     where: { 
       active: true,
-      field: "sku" // Alleen SKU regels voor nu
+      field: { in: ["sku", "orderStatus"] }
     }
   })
 
@@ -85,25 +91,35 @@ async function applyTagRules(sku: string | null, existingTags: string | null): P
   // Pas elke regel toe
   for (const rule of tagRules) {
     let matches = false
+    let fieldValue: string | null = null
+
+    // Bepaal welk veld te checken
+    if (rule.field === "sku") {
+      fieldValue = sku
+    } else if (rule.field === "orderStatus") {
+      fieldValue = orderStatus
+    }
+
+    if (!fieldValue) continue
 
     switch (rule.condition) {
       case "starts_with":
-        matches = sku.startsWith(rule.value)
+        matches = fieldValue.startsWith(rule.value)
         break
       case "ends_with":
-        matches = sku.endsWith(rule.value)
+        matches = fieldValue.endsWith(rule.value)
         break
       case "contains":
-        matches = sku.includes(rule.value)
+        matches = fieldValue.includes(rule.value)
         break
       case "equals":
-        matches = sku === rule.value
+        matches = fieldValue === rule.value
         break
     }
 
     if (matches && !appliedTags.includes(rule.tag)) {
       appliedTags.push(rule.tag)
-      console.log(`   🏷️  Tag toegepast: "${rule.tag}" (SKU ${rule.condition} "${rule.value}")`)
+      console.log(`   🏷️  Tag toegepast: "${rule.tag}" (${rule.field} ${rule.condition} "${rule.value}")`)
     }
   }
 
@@ -345,9 +361,10 @@ export async function POST(request: NextRequest) {
           console.log(`   🏷️  Order tags: ${order.tags.join(", ")} → Priority: ${priority}`)
         }
 
-        // Pas tag regels toe op basis van SKU
+        // Pas tag regels toe op basis van SKU en orderStatus
         const finalTags = await applyTagRules(
-          product.sku ?? null, 
+          product.sku ?? null,
+          orderStatus || null,
           orderTagsArray.length > 0 ? orderTagsArray.join(", ") : null
         )
 
@@ -355,7 +372,8 @@ export async function POST(request: NextRequest) {
         const exclusionCheck = await shouldExclude(
           product.sku ?? null,
           order.externalDisplayId || order.orderNumber || orderUuid,
-          order.customerName || null
+          order.customerName || null,
+          orderStatus || null
         )
 
         if (exclusionCheck.excluded) {

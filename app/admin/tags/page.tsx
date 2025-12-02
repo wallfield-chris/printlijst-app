@@ -610,6 +610,7 @@ export default function TagsPage() {
                             required
                           >
                             <option value="sku">SKU</option>
+                            <option value="orderStatus">Order Status</option>
                           </select>
                         </div>
 
@@ -895,6 +896,7 @@ export default function TagsPage() {
                                 <option value="sku">SKU</option>
                                 <option value="orderNumber">Order Nummer</option>
                                 <option value="customerName">Klant Naam</option>
+                                <option value="orderStatus">Order Status</option>
                               </select>
                             </div>
 
