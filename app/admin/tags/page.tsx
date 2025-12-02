@@ -78,6 +78,7 @@ export default function TagsPage() {
   const [reason, setReason] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncingPriority, setSyncingPriority] = useState(false)
   
   // Production specs form state
   const [specTag, setSpecTag] = useState("")
@@ -152,6 +153,31 @@ export default function TagsPage() {
       alert("Er is een fout opgetreden bij het synchroniseren van tags")
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleSyncPriority = async () => {
+    if (!confirm("Weet je zeker dat je alle priorities wilt synchroniseren? Dit kan even duren.")) {
+      return
+    }
+
+    setSyncingPriority(true)
+    try {
+      const response = await fetch("/api/priority-rules/sync", {
+        method: "POST"
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        alert(`Priorities gesynchroniseerd!\n\nTotaal jobs: ${result.totalJobs}\nBijgewerkt: ${result.updated}\nRegels toegepast: ${result.rules}`)
+      } else {
+        throw new Error("Failed to sync priorities")
+      }
+    } catch (error) {
+      console.error("Error syncing priorities:", error)
+      alert("Er is een fout opgetreden bij het synchroniseren van priorities")
+    } finally {
+      setSyncingPriority(false)
     }
   }
 
@@ -978,7 +1004,7 @@ export default function TagsPage() {
         <>
           {/* Add New Priority Rule Button */}
           {!showAddForm && (
-            <div className="mb-6">
+            <div className="mb-6 flex gap-3">
               <button
                 onClick={() => setShowAddForm(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -987,6 +1013,17 @@ export default function TagsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 Nieuwe Priority Regel
+              </button>
+              
+              <button
+                onClick={handleSyncPriority}
+                disabled={syncingPriority}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {syncingPriority ? "Bezig met synchroniseren..." : "Sync Priority"}
               </button>
             </div>
           )}
