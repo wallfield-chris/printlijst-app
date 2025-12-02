@@ -15,52 +15,88 @@ async function shouldExclude(
   customerName: string | null,
   orderStatus: string | null
 ): Promise<{ excluded: boolean; reason?: string }> {
-  // Haal actieve exclusion regels op
+  // Haal actieve exclusion regels op, gegroepeerd
   const exclusionRules = await prisma.exclusionRule.findMany({
-    where: { active: true }
+    where: { active: true },
+    orderBy: [
+      { reason: 'asc' },
+      { createdAt: 'asc' }
+    ]
   })
 
+  // Groepeer regels per reason (of null als geen reason)
+  const rulesByReason = new Map<string, typeof exclusionRules>()
   for (const rule of exclusionRules) {
-    let matches = false
-    let fieldValue: string | null = null
+    const key = rule.reason || '__no_reason__'
+    if (!rulesByReason.has(key)) {
+      rulesByReason.set(key, [])
+    }
+    rulesByReason.get(key)!.push(rule)
+  }
 
-    // Bepaal welk veld te checken
-    switch (rule.field) {
-      case "sku":
-        fieldValue = sku
-        break
-      case "orderNumber":
-        fieldValue = orderNumber
-        break
-      case "customerName":
-        fieldValue = customerName
-        break
-      case "orderStatus":
-        fieldValue = orderStatus
-        break
+  // Evalueer elke groep
+  for (const [reasonKey, rules] of rulesByReason) {
+    let result = false
+    
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i]
+      let fieldValue: string | null = null
+
+      // Bepaal welk veld te checken
+      switch (rule.field) {
+        case "sku":
+          fieldValue = sku
+          break
+        case "orderNumber":
+          fieldValue = orderNumber
+          break
+        case "customerName":
+          fieldValue = customerName
+          break
+        case "orderStatus":
+          fieldValue = orderStatus
+          break
+      }
+
+      let matches = false
+      if (fieldValue) {
+        // Pas conditie toe
+        switch (rule.condition) {
+          case "starts_with":
+            matches = fieldValue.startsWith(rule.value)
+            break
+          case "ends_with":
+            matches = fieldValue.endsWith(rule.value)
+            break
+          case "contains":
+            matches = fieldValue.includes(rule.value)
+            break
+          case "equals":
+            matches = fieldValue === rule.value
+            break
+        }
+      }
+
+      // Combineer met vorige resultaat gebaseerd op operator
+      if (i === 0) {
+        result = matches
+      } else {
+        const prevRule = rules[i - 1]
+        if (prevRule.operator === "OR") {
+          result = result || matches
+        } else { // AND
+          result = result && matches
+        }
+      }
     }
 
-    if (!fieldValue) continue
-
-    // Pas conditie toe
-    switch (rule.condition) {
-      case "starts_with":
-        matches = fieldValue.startsWith(rule.value)
-        break
-      case "ends_with":
-        matches = fieldValue.endsWith(rule.value)
-        break
-      case "contains":
-        matches = fieldValue.includes(rule.value)
-        break
-      case "equals":
-        matches = fieldValue === rule.value
-        break
-    }
-
-    if (matches) {
-      console.log(`   ⛔ Exclusion match: ${rule.field} ${rule.condition} "${rule.value}"${rule.reason ? ` (${rule.reason})` : ''}`)
-      return { excluded: true, reason: rule.reason || undefined }
+    if (result) {
+      const reason = reasonKey === '__no_reason__' ? undefined : reasonKey
+      const ruleDesc = rules.map((r, i) => 
+        `${r.field} ${r.condition} "${r.value}"${i < rules.length - 1 ? ` ${r.operator}` : ''}`
+      ).join(' ')
+      console.log(`   ⛔ Exclusion match: ${ruleDesc}${reason ? ` (${reason})` : ''}`)
+      return { excluded: true, reason }
     }
   }
 
@@ -78,7 +114,11 @@ async function applyTagRules(
     where: { 
       active: true,
       field: { in: ["sku", "orderStatus"] }
-    }
+    },
+    orderBy: [
+      { tag: 'asc' },
+      { createdAt: 'asc' }
+    ]
   })
 
   const appliedTags: string[] = []
@@ -88,38 +128,71 @@ async function applyTagRules(
     appliedTags.push(...existingTags.split(",").map(t => t.trim()).filter(t => t))
   }
 
-  // Pas elke regel toe
+  // Groepeer regels per tag
+  const rulesByTag = new Map<string, typeof tagRules>()
   for (const rule of tagRules) {
-    let matches = false
-    let fieldValue: string | null = null
+    if (!rulesByTag.has(rule.tag)) {
+      rulesByTag.set(rule.tag, [])
+    }
+    rulesByTag.get(rule.tag)!.push(rule)
+  }
 
-    // Bepaal welk veld te checken
-    if (rule.field === "sku") {
-      fieldValue = sku
-    } else if (rule.field === "orderStatus") {
-      fieldValue = orderStatus
+  // Evalueer elke tag groep
+  for (const [tag, rules] of rulesByTag) {
+    if (appliedTags.includes(tag)) continue // Skip als tag al bestaat
+
+    // Evalueer met operator logica
+    let result = false
+    let pendingOr = false
+    
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i]
+      let fieldValue: string | null = null
+
+      // Bepaal welk veld te checken
+      if (rule.field === "sku") {
+        fieldValue = sku
+      } else if (rule.field === "orderStatus") {
+        fieldValue = orderStatus
+      }
+
+      let matches = false
+      if (fieldValue) {
+        switch (rule.condition) {
+          case "starts_with":
+            matches = fieldValue.startsWith(rule.value)
+            break
+          case "ends_with":
+            matches = fieldValue.endsWith(rule.value)
+            break
+          case "contains":
+            matches = fieldValue.includes(rule.value)
+            break
+          case "equals":
+            matches = fieldValue === rule.value
+            break
+        }
+      }
+
+      // Combineer met vorige resultaat gebaseerd op operator
+      if (i === 0) {
+        result = matches
+      } else {
+        const prevRule = rules[i - 1]
+        if (prevRule.operator === "OR") {
+          result = result || matches
+        } else { // AND
+          result = result && matches
+        }
+      }
     }
 
-    if (!fieldValue) continue
-
-    switch (rule.condition) {
-      case "starts_with":
-        matches = fieldValue.startsWith(rule.value)
-        break
-      case "ends_with":
-        matches = fieldValue.endsWith(rule.value)
-        break
-      case "contains":
-        matches = fieldValue.includes(rule.value)
-        break
-      case "equals":
-        matches = fieldValue === rule.value
-        break
-    }
-
-    if (matches && !appliedTags.includes(rule.tag)) {
-      appliedTags.push(rule.tag)
-      console.log(`   🏷️  Tag toegepast: "${rule.tag}" (${rule.field} ${rule.condition} "${rule.value}")`)
+    if (result) {
+      appliedTags.push(tag)
+      const ruleDesc = rules.map((r, i) => 
+        `${r.field} ${r.condition} "${r.value}"${i < rules.length - 1 ? ` ${r.operator}` : ''}`
+      ).join(' ')
+      console.log(`   🏷️  Tag toegepast: "${tag}" (${ruleDesc})`)
     }
   }
 

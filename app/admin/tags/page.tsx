@@ -8,6 +8,8 @@ interface TagRule {
   condition: string
   value: string
   tag: string
+  operator?: string
+  ruleGroup?: string
   active: boolean
   createdAt: string
   updatedAt: string
@@ -19,6 +21,8 @@ interface ExclusionRule {
   condition: string
   value: string
   reason?: string
+  operator?: string
+  ruleGroup?: string
   active: boolean
   createdAt: string
   updatedAt: string
@@ -28,6 +32,7 @@ interface RuleCondition {
   field: string
   condition: string
   value: string
+  operator?: string // "AND" or "OR" for next condition
 }
 
 interface ProductionSpec {
@@ -49,7 +54,7 @@ export default function TagsPage() {
   
   // Form state - now supporting multiple conditions
   const [conditions, setConditions] = useState<RuleCondition[]>([
-    { field: "sku", condition: "starts_with", value: "" }
+    { field: "sku", condition: "starts_with", value: "", operator: "AND" }
   ])
   const [tag, setTag] = useState("")
   const [reason, setReason] = useState("")
@@ -114,7 +119,7 @@ export default function TagsPage() {
     }
 
     try {
-      // Create separate rules for each condition (OR logic)
+      // Create separate rules for each condition with operator
       for (const cond of conditions) {
         if (!cond.value.trim()) continue // Skip empty conditions
         
@@ -127,6 +132,7 @@ export default function TagsPage() {
             field: cond.field,
             condition: cond.condition,
             value: cond.value,
+            operator: cond.operator || "AND",
             tag,
             active: true
           }),
@@ -146,7 +152,7 @@ export default function TagsPage() {
   }
 
   const addCondition = () => {
-    setConditions([...conditions, { field: "sku", condition: "starts_with", value: "" }])
+    setConditions([...conditions, { field: "sku", condition: "starts_with", value: "", operator: "AND" }])
   }
 
   const removeCondition = (index: number) => {
@@ -166,7 +172,8 @@ export default function TagsPage() {
     setConditions([{
       field: rule.field,
       condition: rule.condition,
-      value: rule.value
+      value: rule.value,
+      operator: rule.operator || "AND"
     }])
     setTag(rule.tag)
     setEditingId(rule.id)
@@ -188,6 +195,7 @@ export default function TagsPage() {
           field: conditions[0].field,
           condition: conditions[0].condition,
           value: conditions[0].value,
+          operator: conditions[0].operator || "AND",
           tag,
           active: true
         }),
@@ -372,6 +380,7 @@ export default function TagsPage() {
             field: cond.field,
             condition: cond.condition,
             value: cond.value,
+            operator: cond.operator || "AND",
             reason: reason || null,
             active: true
           }),
@@ -405,6 +414,7 @@ export default function TagsPage() {
           field: conditions[0].field,
           condition: conditions[0].condition,
           value: conditions[0].value,
+          operator: conditions[0].operator || "AND",
           reason: reason || null,
           active: true
         }),
@@ -426,7 +436,8 @@ export default function TagsPage() {
     setConditions([{
       field: rule.field,
       condition: rule.condition,
-      value: rule.value
+      value: rule.value,
+      operator: rule.operator || "AND"
     }])
     setReason(rule.reason || "")
     setEditingId(rule.id)
@@ -667,12 +678,17 @@ export default function TagsPage() {
                       )}
                     </div>
                     
-                    {/* OR label between conditions */}
+                    {/* AND/OR operator between conditions */}
                     {index < conditions.length - 1 && (
                       <div className="flex justify-center my-2">
-                        <span className="bg-blue-50 px-3 py-1 rounded text-xs font-semibold text-blue-600">
-                          OF
-                        </span>
+                        <select
+                          value={cond.operator || "OR"}
+                          onChange={(e) => updateCondition(index, "operator", e.target.value)}
+                          className="bg-blue-50 px-3 py-1 rounded text-xs font-semibold text-blue-600 border-0 cursor-pointer hover:bg-blue-100 focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="OR">OF</option>
+                          <option value="AND">EN</option>
+                        </select>
                       </div>
                     )}
                   </div>
@@ -953,12 +969,17 @@ export default function TagsPage() {
                           )}
                         </div>
                         
-                        {/* OR label between conditions */}
+                        {/* AND/OR operator between conditions */}
                         {index < conditions.length - 1 && (
                           <div className="flex justify-center my-2">
-                            <span className="bg-red-50 px-3 py-1 rounded text-xs font-semibold text-red-600">
-                              OF
-                            </span>
+                            <select
+                              value={cond.operator || "OR"}
+                              onChange={(e) => updateCondition(index, "operator", e.target.value)}
+                              className="bg-red-50 px-3 py-1 rounded text-xs font-semibold text-red-600 border-0 cursor-pointer hover:bg-red-100 focus:ring-2 focus:ring-red-500"
+                            >
+                              <option value="OR">OF</option>
+                              <option value="AND">EN</option>
+                            </select>
                           </div>
                         )}
                       </div>

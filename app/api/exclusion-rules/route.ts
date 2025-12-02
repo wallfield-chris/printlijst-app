@@ -24,7 +24,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { field, condition, value, reason, active } = body
+    const { field, condition, value, reason, active, operator } = body
 
     if (!field || !condition || !value) {
       return NextResponse.json(
@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
         value,
         reason: reason || null,
         active: active !== undefined ? active : true,
+        operator: operator || "AND"
       },
     })
 

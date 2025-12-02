@@ -86,30 +86,36 @@ model Setting {
 
 model TagRule {
   id        String   @id @default(cuid())
-  field     String   // Welk veld te checken (bijv. "sku")
+  field     String   // Welk veld te checken (bijv. "sku", "orderStatus")
   condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
   value     String   // De waarde om te checken
   tag       String   // De tag die toegekend moet worden
+  operator  String   @default("AND") // Operator voor volgende conditie ("AND", "OR")
+  ruleGroup String?  // Groepeer meerdere condities samen (zelfde ID = 1 regel)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([field])
   @@index([active])
+  @@index([ruleGroup])
 }
 
 model ExclusionRule {
   id        String   @id @default(cuid())
-  field     String   // Welk veld te checken (bijv. "sku", "orderNumber", "customerName")
+  field     String   // Welk veld te checken (bijv. "sku", "orderNumber", "customerName", "orderStatus")
   condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
   value     String   // De waarde om te checken
   reason    String?  // Optionele reden voor exclusion
+  operator  String   @default("AND") // Operator voor volgende conditie ("AND", "OR")
+  ruleGroup String?  // Groepeer meerdere condities samen (zelfde ID = 1 regel)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([field])
   @@index([active])
+  @@index([ruleGroup])
 }
 
 model ListView {
