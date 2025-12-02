@@ -128,6 +128,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     
     console.log("📥 Webhook ontvangen:", JSON.stringify(body, null, 2))
+    
+    // Check voor event type (voor status updates)
+    const webhookEvent = body.event
+    if (webhookEvent) {
+      console.log(`📢 Webhook event: ${webhookEvent}`)
+    }
 
     // Extract orderUuid (verschillende mogelijke veldnamen)
     const orderUuid = 
@@ -204,8 +210,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Extract order status from order data
-    const orderStatus = order.status || body.status || null
+    // Extract order status from order data or event
+    let orderStatus = order.status || body.status || null
+    
+    // Map webhook event naar status als geen expliciete status
+    if (!orderStatus && webhookEvent) {
+      const eventToStatus: Record<string, string> = {
+        'orderCompleted': 'completed',
+        'orderCancelled': 'cancelled',
+        'orderShipped': 'shipped',
+        'orderPicked': 'picked',
+        'orderPacking': 'packing',
+        'orderProcessing': 'processing'
+      }
+      orderStatus = eventToStatus[webhookEvent] || null
+      if (orderStatus) {
+        console.log(`📊 Status afgeleid van event '${webhookEvent}': ${orderStatus}`)
+      }
+    }
+    
     console.log(`📊 Order status: ${orderStatus}`)
     
     // Log to debug system if enabled
@@ -215,6 +238,7 @@ export async function POST(request: NextRequest) {
 
     // Check of we bestaande printjobs moeten updaten met nieuwe order status
     if (existingJobs.length > 0) {
+      console.log(`📋 Order ${orderUuid} bestaat al met ${existingJobs.length} printjobs`)
       let updatedJobs = 0
       
       if (orderStatus) {
@@ -231,6 +255,9 @@ export async function POST(request: NextRequest) {
           })
           
           updatedJobs = updateResult.count
+          console.log(`✅ ${updatedJobs} printjobs ge-update naar status: ${orderStatus}`)
+        } else {
+          console.log(`ℹ️  Alle printjobs hebben al status: ${orderStatus}`)
         }
       }
 
@@ -242,6 +269,8 @@ export async function POST(request: NextRequest) {
         duplicate: existingJobs.length > 0,
         existingJobs: existingJobs.length,
         updatedJobs,
+        orderStatus,
+        event: webhookEvent,
         orderStatus,
         printJobs: existingJobs.map(job => ({
           id: job.id,
