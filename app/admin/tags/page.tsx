@@ -815,9 +815,11 @@ export default function TagsPage() {
                               </span>
                             </span>
 
-                            {/* OR label between conditions */}
+                            {/* Operator label between conditions */}
                             {index < rulesForTag.length - 1 && (
-                              <span className="text-xs font-semibold text-blue-600 ml-2">OF</span>
+                              <span className="text-xs font-semibold text-blue-600 ml-2">
+                                {rule.operator === "AND" ? "EN" : "OF"}
+                              </span>
                             )}
 
                             {/* Individual rule actions */}
@@ -1072,79 +1074,96 @@ export default function TagsPage() {
               </div>
             ) : (
               <div className="divide-y divide-gray-200">
-                {exclusionRules.map((rule) => (
-                  <div key={rule.id} className="p-6 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        {/* Rule Info */}
-                        <div className="flex items-center gap-3 mb-2">
-                          {rule.reason && (
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">
-                              {rule.reason}
-                            </span>
+                {/* Group rules by reason (or null) */}
+                {Array.from(new Set(exclusionRules.map(r => r.reason || '__no_reason__'))).map((reasonKey) => {
+                  const rulesForReason = exclusionRules.filter(r => (r.reason || '__no_reason__') === reasonKey)
+                  const displayReason = reasonKey === '__no_reason__' ? null : reasonKey
+                  
+                  return (
+                    <div key={reasonKey} className="p-6 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          {/* Reason Header */}
+                          {displayReason && (
+                            <div className="flex items-center gap-3 mb-3">
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                                {displayReason}
+                              </span>
+                              <span className="text-sm text-gray-500">
+                                ({rulesForReason.length} conditie{rulesForReason.length !== 1 ? 's' : ''})
+                              </span>
+                            </div>
                           )}
-                          <span className="text-xs text-gray-500">
-                            {new Date(rule.createdAt).toLocaleDateString("nl-NL")}
-                          </span>
-                        </div>
 
-                        {/* Condition */}
-                        <div className="flex items-center gap-2 ml-1">
-                          {/* Status indicator */}
-                          <div className={`w-2 h-2 rounded-full ${rule.active ? 'bg-red-500' : 'bg-gray-300'}`} />
-                          
-                          {/* Condition text */}
-                          <span className="text-sm text-gray-700">
-                            <span className="font-medium">{rule.field.toUpperCase()}</span>
-                            {' '}{getConditionLabel(rule.condition)}{' '}
-                            <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">
-                              {rule.value}
-                            </span>
-                          </span>
+                          {/* Conditions */}
+                          <div className="space-y-2 ml-1">
+                            {rulesForReason.map((rule, index) => (
+                              <div key={rule.id} className="flex items-center gap-2">
+                                {/* Status indicator */}
+                                <div className={`w-2 h-2 rounded-full ${rule.active ? 'bg-red-500' : 'bg-gray-300'}`} />
+                                
+                                {/* Condition text */}
+                                <span className="text-sm text-gray-700">
+                                  <span className="font-medium">{rule.field.toUpperCase()}</span>
+                                  {' '}{getConditionLabel(rule.condition)}{' '}
+                                  <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">
+                                    {rule.value}
+                                  </span>
+                                </span>
 
-                          {/* Individual rule actions */}
-                          <div className="flex items-center gap-1 ml-auto">
-                            <button
-                              onClick={() => handleToggleActive(rule.id, rule.active)}
-                              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                              title={rule.active ? "Deactiveer" : "Activeer"}
-                            >
-                              {rule.active ? (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                  <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
-                                </svg>
-                              ) : (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                                </svg>
-                              )}
-                            </button>
-                            
-                            <button
-                              onClick={() => handleEditExclusion(rule)}
-                              className="p-1 text-blue-600 hover:text-blue-800 transition-colors"
-                              title="Bewerk"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                            </button>
-                            
-                            <button
-                              onClick={() => handleDeleteExclusion(rule.id)}
-                              className="p-1 text-red-600 hover:text-red-800 transition-colors"
-                              title="Verwijder"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
+                                {/* Operator label between conditions */}
+                                {index < rulesForReason.length - 1 && (
+                                  <span className="text-xs font-semibold text-red-600 ml-2">
+                                    {rule.operator === "AND" ? "EN" : "OF"}
+                                  </span>
+                                )}
+
+                                {/* Individual rule actions */}
+                                <div className="flex items-center gap-1 ml-auto">
+                                  <button
+                                    onClick={() => handleToggleActive(rule.id, rule.active)}
+                                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                                    title={rule.active ? "Deactiveer" : "Activeer"}
+                                  >
+                                    {rule.active ? (
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                  
+                                  <button
+                                    onClick={() => handleEditExclusion(rule)}
+                                    className="p-1 text-blue-600 hover:text-blue-800 transition-colors"
+                                    title="Bewerk"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                  </button>
+                                  
+                                  <button
+                                    onClick={() => handleDeleteExclusion(rule.id)}
+                                    className="p-1 text-red-600 hover:text-red-800 transition-colors"
+                                    title="Verwijder"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
