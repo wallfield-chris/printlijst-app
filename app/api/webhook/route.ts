@@ -103,17 +103,18 @@ async function shouldExclude(
   return { excluded: false }
 }
 
-// Helper functie om tags toe te kennen op basis van tag regels
+// Helper functie om tags toe te kennen op basis van tag regels (product-specifiek)
 async function applyTagRules(
   sku: string | null, 
   orderStatus: string | null,
   existingTags: string | null
 ): Promise<string> {
-  // Haal actieve tag regels op voor SKU en orderStatus
+  // Haal actieve tag regels op voor SKU en orderStatus met scope "product"
   const tagRules = await prisma.tagRule.findMany({
     where: { 
       active: true,
-      field: { in: ["sku", "orderStatus"] }
+      field: { in: ["sku", "orderStatus"] },
+      scope: "product" // Alleen product-specifieke regels
     },
     orderBy: [
       { tag: 'asc' },
@@ -204,10 +205,11 @@ async function getOrderWideTags(
   allSkus: string[],
   orderStatus: string | null
 ): Promise<string> {
-  // Haal actieve tag regels op voor SKU en orderStatus
+  // Haal actieve tag regels op met scope "order"
   const tagRules = await prisma.tagRule.findMany({
     where: { 
       active: true,
+      scope: "order", // Alleen order-brede regels
       field: { in: ["sku", "orderStatus"] }
     },
     orderBy: [

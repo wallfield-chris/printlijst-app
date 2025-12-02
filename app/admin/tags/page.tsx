@@ -10,6 +10,7 @@ interface TagRule {
   tag: string
   operator?: string
   ruleGroup?: string
+  scope?: string
   active: boolean
   createdAt: string
   updatedAt: string
@@ -57,6 +58,7 @@ export default function TagsPage() {
     { field: "sku", condition: "starts_with", value: "", operator: "AND" }
   ])
   const [tag, setTag] = useState("")
+  const [scope, setScope] = useState<"product" | "order">("product")
   const [reason, setReason] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -159,6 +161,7 @@ export default function TagsPage() {
             condition: cond.condition,
             value: cond.value,
             operator: cond.operator || "AND",
+            scope: scope,
             tag,
             active: true
           }),
@@ -202,6 +205,7 @@ export default function TagsPage() {
       operator: rule.operator || "AND"
     }])
     setTag(rule.tag)
+    setScope((rule.scope as "product" | "order") || "product")
     setEditingId(rule.id)
     setShowAddForm(true)
   }
@@ -222,6 +226,7 @@ export default function TagsPage() {
           condition: conditions[0].condition,
           value: conditions[0].value,
           operator: conditions[0].operator || "AND",
+          scope: scope,
           tag,
           active: true
         }),
@@ -491,6 +496,7 @@ export default function TagsPage() {
   const resetForm = () => {
     setConditions([{ field: "sku", condition: "starts_with", value: "" }])
     setTag("")
+    setScope("product")
     setReason("")
     setEditingId(null)
     setShowAddForm(false)
@@ -628,6 +634,43 @@ export default function TagsPage() {
                     <option key={existingTag} value={existingTag} />
                   ))}
                 </datalist>
+              </div>
+            </div>
+
+            {/* Scope Selector */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Scope
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="scope"
+                    value="product"
+                    checked={scope === "product"}
+                    onChange={(e) => setScope(e.target.value as "product" | "order")}
+                    className="mr-2"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium">Product</span>
+                    <span className="text-gray-500 block text-xs">Tag alleen voor matchend product</span>
+                  </span>
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="scope"
+                    value="order"
+                    checked={scope === "order"}
+                    onChange={(e) => setScope(e.target.value as "product" | "order")}
+                    className="mr-2"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium">Hele Order</span>
+                    <span className="text-gray-500 block text-xs">Tag voor alle producten in order</span>
+                  </span>
+                </label>
               </div>
             </div>
 
@@ -797,6 +840,12 @@ export default function TagsPage() {
                         <span className="text-sm text-gray-500">
                           ({rulesForTag.length} conditie{rulesForTag.length !== 1 ? 's' : ''})
                         </span>
+                        {/* Scope badge */}
+                        {rulesForTag[0]?.scope === "order" && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                            📦 Hele Order
+                          </span>
+                        )}
                       </div>
 
                       {/* Conditions */}

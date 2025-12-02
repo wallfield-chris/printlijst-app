@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { field, condition, value, tag, active, operator } = body
+    const { field, condition, value, tag, active, operator, scope } = body
 
     // Validatie
     if (!field || !condition || !value || !tag) {
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
         value,
         tag,
         active: active !== undefined ? active : true,
-        operator: operator || "AND"
+        operator: operator || "AND",
+        scope: scope || "product"
       }
     })
 

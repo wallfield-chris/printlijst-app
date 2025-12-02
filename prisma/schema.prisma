@@ -92,6 +92,7 @@ model TagRule {
   tag       String   // De tag die toegekend moet worden
   operator  String   @default("AND") // Operator voor volgende conditie ("AND", "OR")
   ruleGroup String?  // Groepeer meerdere condities samen (zelfde ID = 1 regel)
+  scope     String   @default("product") // "product" = alleen dit product, "order" = hele order
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
