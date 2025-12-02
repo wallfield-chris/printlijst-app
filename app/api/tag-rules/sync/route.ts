@@ -219,51 +219,96 @@ export async function POST(request: NextRequest) {
 
     let updatedCount = 0
     let errorCount = 0
+    const orderArray = Array.from(jobsByOrder.entries())
+    const BATCH_SIZE = 10 // Process 10 orders at a time
+    const DELAY_MS = 100 // 100ms delay between batches
 
-    // Verwerk elke order
-    for (const [orderUuid, orderJobs] of jobsByOrder) {
-      try {
-        // Verzamel alle SKU's in deze order
-        const allOrderSkus = orderJobs
-          .map(job => job.sku)
-          .filter((sku): sku is string => sku !== null)
-        
-        // Bepaal order-brede tags
-        const orderWideTags = await getOrderWideTags(allOrderSkus, orderJobs[0].orderStatus)
-        
-        // Update elk printjob in de order
-        for (const job of orderJobs) {
-          // Bereken product-specifieke tags
-          const productTags = await applyTagRules(job.sku, job.orderStatus)
+    // Verwerk orders in batches om rate limits te voorkomen
+    for (let i = 0; i < orderArray.length; i += BATCH_SIZE) {
+      const batch = orderArray.slice(i, i + BATCH_SIZE)
+      console.log(`\n📦 Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(orderArray.length / BATCH_SIZE)} (orders ${i + 1}-${Math.min(i + BATCH_SIZE, orderArray.length)})`)
+
+      // Process batch in parallel
+      const batchPromises = batch.map(async ([orderUuid, orderJobs]) => {
+        try {
+          console.log(`   🔍 Processing order ${orderJobs[0].orderNumber} (${orderJobs.length} products)`)
           
-          // Combineer product en order-brede tags
-          const allTagsSet = new Set<string>()
-          if (productTags) {
-            productTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
-          }
+          // Verzamel alle SKU's in deze order
+          const allOrderSkus = orderJobs
+            .map(job => job.sku)
+            .filter((sku): sku is string => sku !== null)
+          
+          console.log(`      SKUs: ${allOrderSkus.join(", ")}`)
+          
+          // Bepaal order-brede tags
+          const orderWideTags = await getOrderWideTags(allOrderSkus, orderJobs[0].orderStatus)
           if (orderWideTags) {
-            orderWideTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+            console.log(`      📦 Order-wide tags: ${orderWideTags}`)
           }
           
-          const newTags = Array.from(allTagsSet).join(", ") || null
+          let jobUpdates = 0
           
-          if (newTags !== job.tags) {
-            await prisma.printJob.update({
-              where: { id: job.id },
-              data: { tags: newTags }
-            })
+          // Update elk printjob in de order
+          for (const job of orderJobs) {
+            // Bereken product-specifieke tags
+            const productTags = await applyTagRules(job.sku, job.orderStatus)
             
-            console.log(`   ✓ Updated ${job.orderNumber} - ${job.productName}: "${job.tags || 'none'}" → "${newTags || 'none'}"`)
-            updatedCount++
+            // Combineer product en order-brede tags
+            const allTagsSet = new Set<string>()
+            if (productTags) {
+              productTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+            }
+            if (orderWideTags) {
+              orderWideTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+            }
+            
+            const newTags = Array.from(allTagsSet).join(", ") || null
+            
+            if (newTags !== job.tags) {
+              await prisma.printJob.update({
+                where: { id: job.id },
+                data: { tags: newTags }
+              })
+              
+              console.log(`      ✓ ${job.productName}: "${job.tags || 'none'}" → "${newTags || 'none'}"`)
+              jobUpdates++
+            }
           }
+          
+          if (jobUpdates > 0) {
+            console.log(`   ✅ Order ${orderJobs[0].orderNumber}: ${jobUpdates} product(s) updated`)
+          } else {
+            console.log(`   ℹ️  Order ${orderJobs[0].orderNumber}: no changes needed`)
+          }
+          
+          return { success: true, updated: jobUpdates }
+        } catch (error) {
+          console.error(`   ✗ Error processing order ${orderUuid}:`, error)
+          return { success: false, error: error instanceof Error ? error.message : String(error) }
         }
-      } catch (error) {
-        console.error(`   ✗ Error updating order ${orderUuid}:`, error)
-        errorCount++
+      })
+
+      const batchResults = await Promise.all(batchPromises)
+      
+      // Count results
+      for (const result of batchResults) {
+        if (result.success) {
+          updatedCount += result.updated || 0
+        } else {
+          errorCount++
+        }
+      }
+
+      console.log(`   Batch complete: ${batchResults.filter(r => r.success).length} orders processed successfully`)
+
+      // Add delay between batches (except for last batch)
+      if (i + BATCH_SIZE < orderArray.length) {
+        console.log(`   ⏱️  Waiting ${DELAY_MS}ms before next batch...`)
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS))
       }
     }
 
-    console.log(`✅ Tag sync complete: ${updatedCount} updated, ${errorCount} errors, ${printJobs.length - updatedCount - errorCount} unchanged`)
+    console.log(`\n✅ Tag sync complete: ${updatedCount} jobs updated, ${errorCount} orders failed, ${printJobs.length - updatedCount} unchanged`)
 
     return NextResponse.json({
       success: true,
@@ -271,7 +316,7 @@ export async function POST(request: NextRequest) {
       totalOrders: jobsByOrder.size,
       updatedCount,
       errorCount,
-      unchangedCount: printJobs.length - updatedCount - errorCount
+      unchangedCount: printJobs.length - updatedCount
     })
   } catch (error) {
     console.error("❌ Error syncing tags:", error)

@@ -83,86 +83,90 @@ export async function POST(request: NextRequest) {
     let errorCount = 0
     const errors: string[] = []
 
-    // Process orders in batches to avoid overwhelming the API
-    const batchSize = 10
-    for (let i = 0; i < orderUuids.length; i += batchSize) {
-      const batch = orderUuids.slice(i, i + batchSize)
+    // Process orders sequentially with delays to avoid rate limiting
+    const DELAY_BETWEEN_ORDERS_MS = 300 // 300ms delay between each order
+    
+    console.log(`🔄 Starting sequential sync of ${orderUuids.length} orders (${DELAY_BETWEEN_ORDERS_MS}ms delay between orders)`)
+    
+    for (let i = 0; i < orderUuids.length; i++) {
+      const orderUuid = orderUuids[i]
+      const progress = `[${i + 1}/${orderUuids.length}]`
       
-      await Promise.all(batch.map(async (orderUuid) => {
-        try {
-          console.log(`📦 Syncing order: ${orderUuid}`)
-          
-          // Haal order data op uit GoedeGepickt
-          const order = await api.getOrder(orderUuid)
-          
-          if (!order) {
-            console.warn(`⚠️  Order ${orderUuid} niet gevonden in GoedeGepickt`)
-            errors.push(`Order ${orderUuid} niet gevonden`)
-            errorCount++
-            return
-          }
-
-          const newOrderStatus = order.status
-          
-          if (!newOrderStatus) {
-            console.warn(`⚠️  Geen status gevonden voor order ${orderUuid}`)
-            errors.push(`Geen status voor order ${orderUuid}`)
-            errorCount++
-            return
-          }
-
-          // Check hoeveel printjobs deze order heeft
-          const jobCount = await prisma.printJob.count({
-            where: { orderUuid }
-          })
-          console.log(`   📋 Order ${orderUuid} heeft ${jobCount} printjobs`)
-          
-          // Update ALLE printjobs voor deze order naar de nieuwe status
-          // Maar skip jobs die al completed of cancelled zijn (finale statussen)
-          console.log(`🔄 Updating printjobs for order ${orderUuid} to status: ${newOrderStatus}`)
-          
-          const updateResult = await prisma.printJob.updateMany({
-            where: { 
-              orderUuid,
-              OR: [
-                { orderStatus: null },  // Update jobs zonder status
-                { 
-                  AND: [
-                    { orderStatus: { not: null } },
-                    { orderStatus: { notIn: ['completed', 'cancelled'] } }  // Skip finale statussen
-                  ]
-                }
-              ]
-            },
-            data: { orderStatus: newOrderStatus }
-          })
-          
-          if (updateResult.count > 0) {
-            console.log(`   ✅ Updated ${updateResult.count} printjobs`)
-            updatedCount += updateResult.count
-          } else {
-            console.log(`   ℹ️  No printjobs needed update (already correct status)`)
-          }
-
-        } catch (error) {
-          console.error(`❌ Error syncing order ${orderUuid}:`, error)
-          errors.push(`Error voor order ${orderUuid}: ${error}`)
+      try {
+        console.log(`${progress} 📦 Syncing order: ${orderUuid}`)
+        
+        // Haal order data op uit GoedeGepickt
+        const order = await api.getOrder(orderUuid)
+        
+        if (!order) {
+          console.warn(`${progress} ⚠️  Order ${orderUuid} niet gevonden in GoedeGepickt`)
+          errors.push(`Order ${orderUuid} niet gevonden`)
           errorCount++
+          continue
         }
-      }))
-      
-      // Small delay between batches to be nice to the API
-      if (i + batchSize < orderUuids.length) {
-        await new Promise(resolve => setTimeout(resolve, 100))
+
+        const newOrderStatus = order.status
+        
+        if (!newOrderStatus) {
+          console.warn(`${progress} ⚠️  Geen status gevonden voor order ${orderUuid}`)
+          errors.push(`Geen status voor order ${orderUuid}`)
+          errorCount++
+          continue
+        }
+
+        // Check hoeveel printjobs deze order heeft
+        const jobCount = await prisma.printJob.count({
+          where: { orderUuid }
+        })
+        console.log(`${progress}    📋 Order ${orderUuid} heeft ${jobCount} printjobs, nieuwe status: ${newOrderStatus}`)
+        
+        // Update ALLE printjobs voor deze order naar de nieuwe status
+        // Maar skip jobs die al completed of cancelled zijn (finale statussen)
+        const updateResult = await prisma.printJob.updateMany({
+          where: { 
+            orderUuid,
+            OR: [
+              { orderStatus: null },  // Update jobs zonder status
+              { 
+                AND: [
+                  { orderStatus: { not: null } },
+                  { orderStatus: { notIn: ['completed', 'cancelled'] } }  // Skip finale statussen
+                ]
+              }
+            ]
+          },
+          data: { orderStatus: newOrderStatus }
+        })
+        
+        if (updateResult.count > 0) {
+          console.log(`${progress}    ✅ Updated ${updateResult.count} printjobs`)
+          updatedCount += updateResult.count
+        } else {
+          console.log(`${progress}    ℹ️  No printjobs needed update (already correct status)`)
+        }
+
+        // Delay between orders to prevent rate limiting (except after last order)
+        if (i < orderUuids.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_ORDERS_MS))
+        }
+
+      } catch (error) {
+        console.error(`${progress} ❌ Error syncing order ${orderUuid}:`, error)
+        errors.push(`Order ${orderUuid}: ${error}`)
+        errorCount++
+        
+        // Continue with delay even on error
+        if (i < orderUuids.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_ORDERS_MS))
+        }
       }
     }
 
-    const duration = Date.now() - Date.now()
     console.log(`✅ OrderStatus sync completed: ${updatedCount} printjobs updated, ${errorCount} errors`)
 
     return NextResponse.json({
       success: true,
-      message: `OrderStatus sync voltooid in ${Math.round(duration / 1000)}s`,
+      message: `OrderStatus sync voltooid: ${updatedCount} printjobs bijgewerkt`,
       uniqueOrders: orderUuids.length,
       updated: updatedCount,
       errors: errorCount,
