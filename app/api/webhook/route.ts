@@ -199,6 +199,111 @@ async function applyTagRules(
   return appliedTags.join(", ")
 }
 
+// Helper functie om order-brede tags te bepalen op basis van ALLE SKU's in de order
+async function getOrderWideTags(
+  allSkus: string[],
+  orderStatus: string | null
+): Promise<string> {
+  // Haal actieve tag regels op voor SKU en orderStatus
+  const tagRules = await prisma.tagRule.findMany({
+    where: { 
+      active: true,
+      field: { in: ["sku", "orderStatus"] }
+    },
+    orderBy: [
+      { tag: 'asc' },
+      { createdAt: 'asc' }
+    ]
+  })
+
+  const appliedTags: string[] = []
+
+  // Groepeer regels per tag
+  const rulesByTag = new Map<string, typeof tagRules>()
+  for (const rule of tagRules) {
+    if (!rulesByTag.has(rule.tag)) {
+      rulesByTag.set(rule.tag, [])
+    }
+    rulesByTag.get(rule.tag)!.push(rule)
+  }
+
+  // Evalueer elke tag groep
+  for (const [tag, rules] of rulesByTag) {
+    if (appliedTags.includes(tag)) continue
+
+    // Evalueer met operator logica
+    let result = false
+    
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i]
+      let matches = false
+
+      // Voor SKU regels: check of ENIGE SKU in de order matcht
+      if (rule.field === "sku") {
+        for (const sku of allSkus) {
+          let skuMatches = false
+          switch (rule.condition) {
+            case "starts_with":
+              skuMatches = sku.startsWith(rule.value)
+              break
+            case "ends_with":
+              skuMatches = sku.endsWith(rule.value)
+              break
+            case "contains":
+              skuMatches = sku.includes(rule.value)
+              break
+            case "equals":
+              skuMatches = sku === rule.value
+              break
+          }
+          if (skuMatches) {
+            matches = true
+            break // Een match is genoeg
+          }
+        }
+      } else if (rule.field === "orderStatus" && orderStatus) {
+        // Voor orderStatus: check tegen de order status
+        switch (rule.condition) {
+          case "starts_with":
+            matches = orderStatus.startsWith(rule.value)
+            break
+          case "ends_with":
+            matches = orderStatus.endsWith(rule.value)
+            break
+          case "contains":
+            matches = orderStatus.includes(rule.value)
+            break
+          case "equals":
+            matches = orderStatus === rule.value
+            break
+        }
+      }
+
+      // Combineer met vorige resultaat gebaseerd op operator
+      if (i === 0) {
+        result = matches
+      } else {
+        const prevRule = rules[i - 1]
+        if (prevRule.operator === "OR") {
+          result = result || matches
+        } else { // AND
+          result = result && matches
+        }
+      }
+    }
+
+    if (result) {
+      appliedTags.push(tag)
+      const ruleDesc = rules.map((r, i) => 
+        `${r.field} ${r.condition} "${r.value}"${i < rules.length - 1 ? ` ${r.operator}` : ''}`
+      ).join(' ')
+      console.log(`   🏷️  Order-wide tag: "${tag}" (${ruleDesc})`)
+    }
+  }
+
+  return appliedTags.join(", ")
+}
+
 // GET endpoint voor webhook info
 export async function GET(request: NextRequest) {
   return NextResponse.json({
@@ -337,16 +442,39 @@ export async function POST(request: NextRequest) {
         if (jobsWithDifferentStatus.length > 0) {
           console.log(`🔄 Updating order status voor ${jobsWithDifferentStatus.length} printjobs: ${jobsWithDifferentStatus[0].orderStatus || 'null'} → ${orderStatus}`)
           
+          // Verzamel alle SKU's in de order voor order-brede tags
+          const allOrderSkus = existingJobs
+            .map(job => job.sku)
+            .filter((sku): sku is string => sku !== null)
+          
+          console.log(`🔍 Alle SKU's in bestaande order: ${allOrderSkus.join(", ")}`)
+          
+          // Bepaal order-brede tags
+          const orderWideTags = await getOrderWideTags(allOrderSkus, orderStatus)
+          if (orderWideTags) {
+            console.log(`🏷️  Order-wide tags voor update: ${orderWideTags}`)
+          }
+          
           // Update alle printjobs van deze order met nieuwe status EN herbereken tags
           for (const job of jobsWithDifferentStatus) {
-            // Herbereken tags met nieuwe status (behoud bestaande tags)
-            const newTags = await applyTagRules(job.sku, orderStatus, job.tags)
+            // Herbereken product-specifieke tags met nieuwe status
+            const productTags = await applyTagRules(job.sku, orderStatus, job.tags)
+            
+            // Combineer met order-brede tags
+            const allTagsSet = new Set<string>()
+            if (productTags) {
+              productTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+            }
+            if (orderWideTags) {
+              orderWideTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+            }
+            const newTags = Array.from(allTagsSet).join(", ") || null
             
             await prisma.printJob.update({
               where: { id: job.id },
               data: { 
                 orderStatus,
-                tags: newTags || null
+                tags: newTags
               }
             })
             
@@ -386,6 +514,19 @@ export async function POST(request: NextRequest) {
     // Maak een printjob voor elk product in de order
     if (order.products && order.products.length > 0) {
       console.log(`📦 Order bevat ${order.products.length} producten`)
+
+      // Verzamel alle SKU's in deze order (voor order-brede tag regels)
+      const allOrderSkus = order.products
+        .filter((p: any) => p.sku && p.type !== "parent")
+        .map((p: any) => p.sku as string)
+      
+      console.log(`🔍 Alle SKU's in order: ${allOrderSkus.join(", ")}`)
+      
+      // Bepaal order-brede tags op basis van alle SKU's
+      const orderWideTags = await getOrderWideTags(allOrderSkus, orderStatus || null)
+      if (orderWideTags) {
+        console.log(`🏷️  Order-wide tags: ${orderWideTags}`)
+      }
 
       for (const product of order.products) {
         // Skip parent products (alleen children importeren bij bundle products)
@@ -446,12 +587,24 @@ export async function POST(request: NextRequest) {
           console.log(`   🏷️  Order tags: ${order.tags.join(", ")} → Priority: ${priority}`)
         }
 
-        // Pas tag regels toe op basis van SKU en orderStatus
-        const finalTags = await applyTagRules(
+        // Pas tag regels toe op basis van SKU en orderStatus (product-specifiek)
+        const productTags = await applyTagRules(
           product.sku ?? null,
           orderStatus || null,
           orderTagsArray.length > 0 ? orderTagsArray.join(", ") : null
         )
+
+        // Combineer product-specifieke tags met order-brede tags
+        const allTagsSet = new Set<string>()
+        
+        if (productTags) {
+          productTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+        }
+        if (orderWideTags) {
+          orderWideTags.split(",").map(t => t.trim()).filter(t => t).forEach(tag => allTagsSet.add(tag))
+        }
+        
+        const finalTags = Array.from(allTagsSet).join(", ") || null
 
         // Check of deze printjob uitgesloten moet worden
         const exclusionCheck = await shouldExclude(
@@ -478,7 +631,7 @@ export async function POST(request: NextRequest) {
             quantity: product.productQuantity || 1,
             pickedQuantity: product.pickedQuantity || 0,
             priority,
-            tags: finalTags || null,
+            tags: finalTags,
             orderStatus,
             customerName: order.customer?.name || order.customerName,
             notes: order.notes,
