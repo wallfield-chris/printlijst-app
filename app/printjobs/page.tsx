@@ -11,7 +11,7 @@ interface PrintJob {
   productName: string
   quantity: number
   priority: string
-  status: string
+  printStatus: string
   receivedAt: string
   startedAt?: string
   completedAt?: string
@@ -150,7 +150,7 @@ export default function PrintJobsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ printStatus: newStatus }),
       })
 
       if (!response.ok) {
@@ -193,7 +193,7 @@ export default function PrintJobsPage() {
     if (!selectedJob) return
     
     // Check if already marked as missing file
-    if (selectedJob.status === "completed" || selectedJob.missingFile) {
+    if (selectedJob.printStatus === "completed" || selectedJob.missingFile) {
       alert("Deze printjob is al gemarkeerd als missing file of voltooid")
       return
     }
@@ -204,7 +204,7 @@ export default function PrintJobsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ missingFile: true, status: "completed" }),
+        body: JSON.stringify({ missingFile: true, printStatus: "completed" }),
       })
 
       if (!response.ok) {
@@ -345,7 +345,7 @@ export default function PrintJobsPage() {
             {getFilteredJobs().map((job) => {
               const cardColor = job.missingFile 
                 ? "bg-red-50 border-2 border-red-200" 
-                : job.status === "completed"
+                : job.printStatus === "completed"
                 ? "bg-green-50 border-2 border-green-200"
                 : "bg-white"
               
@@ -378,11 +378,11 @@ export default function PrintJobsPage() {
 
                   <div className="flex flex-col gap-2 ml-4">
                     <span className={`px-3 py-1 rounded-md text-xs font-medium text-center ${
-                      job.status === "in_progress"
+                      job.printStatus === "in_progress"
                         ? "bg-yellow-100 text-yellow-800"
                         : "bg-gray-100 text-gray-800"
                     }`}>
-                      {getStatusText(job.status)}
+                      {getStatusText(job.printStatus)}
                     </span>
                   </div>
                 </div>

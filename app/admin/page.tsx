@@ -14,7 +14,7 @@ interface PrintJob {
   productName: string
   quantity: number
   priority: string
-  status: string
+  printStatus: string
   receivedAt: string
   startedAt?: string
   completedAt?: string
@@ -23,7 +23,7 @@ interface PrintJob {
 }
 
 interface Stats {
-  statusCounts: { status: string; _count: number }[]
+  statusCounts: { printStatus: string; _count: number }[]
   completedJobs: PrintJob[]
   avgProcessingTimeMs: number
   employeeStats: { user: User; count: number }[]
@@ -103,13 +103,13 @@ export default function DashboardPage() {
   }
 
   const getStatusCount = (status: string) => {
-    const statusItem = stats?.statusCounts.find(s => s.status === status)
+    const statusItem = stats?.statusCounts.find(s => s.printStatus === status)
     return statusItem?._count || 0
   }
 
   const calculateTotalM2 = () => {
     const pendingAndInProgress = allJobs.filter(
-      j => j.status === "pending" || j.status === "in_progress"
+      j => j.printStatus === "pending" || j.printStatus === "in_progress"
     )
     
     let totalM2 = 0
@@ -140,8 +140,8 @@ export default function DashboardPage() {
     )
   }
 
-  const pendingJobs = allJobs.filter(j => j.status === "pending")
-  const inProgressJobs = allJobs.filter(j => j.status === "in_progress")
+  const pendingJobs = allJobs.filter(j => j.printStatus === "pending")
+  const inProgressJobs = allJobs.filter(j => j.printStatus === "in_progress")
   const completedToday = allJobs.filter(j => {
     if (!j.completedAt) return false
     const today = new Date()
@@ -339,11 +339,11 @@ export default function DashboardPage() {
                     <div className="flex justify-between items-start mb-1">
                       <span className="font-medium text-gray-900">Order #{job.orderNumber}</span>
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        job.status === "in_progress"
+                        job.printStatus === "in_progress"
                           ? "bg-yellow-100 text-yellow-800"
                           : "bg-blue-100 text-blue-800"
                       }`}>
-                        {job.status === "in_progress" ? "Bezig" : "Wachtend"}
+                        {job.printStatus === "in_progress" ? "Bezig" : "Wachtend"}
                       </span>
                     </div>
                     <p className="text-sm text-gray-600">{job.productName}</p>

@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 
     // Totaal aantal jobs per status
     const statusCounts = await prisma.printJob.groupBy({
-      by: ['status'],
+      by: ['printStatus'],
       _count: true,
     })
 
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const completedJobs = await prisma.printJob.findMany({
       where: {
         ...where,
-        status: 'completed',
+        printStatus: 'completed',
       },
       include: {
         completedByUser: {
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
       by: ['completedBy'],
       where: {
         ...where,
-        status: 'completed',
+        printStatus: 'completed',
         completedBy: { not: null },
       },
       _count: true,

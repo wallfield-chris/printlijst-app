@@ -55,21 +55,21 @@ async function main() {
       productName: 'T-Shirt Zwart - Maat L',
       quantity: 5,
       priority: 'normal',
-      status: 'pending',
+      printStatus: 'pending',
     },
     {
       orderNumber: 'ORD-002',
       productName: 'Hoodie Grijs - Maat M',
       quantity: 3,
       priority: 'high',
-      status: 'pending',
+      printStatus: 'pending',
     },
     {
       orderNumber: 'ORD-003',
       productName: 'Cap Rood',
       quantity: 10,
       priority: 'urgent',
-      status: 'pending',
+      printStatus: 'pending',
     },
   ]
 

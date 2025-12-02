@@ -8,7 +8,7 @@ interface PrintJob {
   productName: string
   quantity: number
   priority: string
-  status: string
+  printStatus: string
   receivedAt: string
   sku?: string
   backfile?: string
@@ -186,7 +186,7 @@ export default function MissingFilesPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{getStatusText(job.status)}</div>
+                      <div className="text-sm text-gray-900">{getStatusText(job.printStatus)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-500">

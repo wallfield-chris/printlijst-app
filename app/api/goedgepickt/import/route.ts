@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
               : null,
             customerName: order.customer?.name || order.customerName,
             notes: order.notes,
-            status: "pending",
+            printStatus: "pending",
             backorder: isBackorder,
             webhookData: JSON.stringify(
               { order, product },

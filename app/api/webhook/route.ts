@@ -505,7 +505,7 @@ export async function POST(request: NextRequest) {
         printJobs: existingJobs.map(job => ({
           id: job.id,
           productName: job.productName,
-          status: job.status,
+          printStatus: job.printStatus,
           orderStatus: updatedJobs > 0 ? orderStatus : job.orderStatus,
         }))
       }, { status: 200 })
@@ -637,7 +637,7 @@ export async function POST(request: NextRequest) {
             orderStatus,
             customerName: order.customer?.name || order.customerName,
             notes: order.notes,
-            status: "pending",
+            printStatus: "pending",
             backorder: isBackorder,
             webhookData: JSON.stringify(
               { 
@@ -686,7 +686,7 @@ export async function POST(request: NextRequest) {
         quantity: job.quantity,
         priority: job.priority,
         backorder: job.backorder,
-        status: job.status,
+        printStatus: job.printStatus,
       })),
       processingTime: `${processingTime}ms`
     }, { status: 201 })

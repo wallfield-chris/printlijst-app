@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const where: any = {}
     
     if (statusParam.length > 0) {
-      where.status = { in: statusParam }
+      where.printStatus = { in: statusParam }
     }
     
     if (missingFile === "true") {
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
         },
       },
       orderBy: [
-        { status: 'asc' },
+        { printStatus: 'asc' },
         { receivedAt: 'asc' },
       ],
     })

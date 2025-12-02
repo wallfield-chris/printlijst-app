@@ -15,23 +15,23 @@ export async function PATCH(
 
     const { id } = await params
     const body = await request.json()
-    const { status, missingFile } = body
+    const { printStatus, missingFile } = body
 
     const updateData: any = {}
     
-    if (status) {
-      updateData.status = status
+    if (printStatus) {
+      updateData.printStatus = printStatus
     }
     
     if (missingFile !== undefined) {
       updateData.missingFile = missingFile
     }
 
-    if (status === "in_progress" && !body.startedAt) {
+    if (printStatus === "in_progress" && !body.startedAt) {
       updateData.startedAt = new Date()
     }
 
-    if (status === "completed") {
+    if (printStatus === "completed") {
       updateData.completedAt = new Date()
       updateData.completedBy = (session.user as any).id
     }

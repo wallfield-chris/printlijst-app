@@ -53,7 +53,7 @@ model PrintJob {
   notes            String?   // Extra notities
   
   // Status & tracking
-  status           String    @default("pending") // "pending", "in_progress", "completed"
+  printStatus      String    @default("pending") // "pending", "in_progress", "completed"
   orderStatus      String?   // Status van de order uit GoedeGepickt webhook
   backorder        Boolean   @default(false)     // Of product in backorder is
   missingFile      Boolean   @default(false)     // Of printfile ontbreekt
@@ -70,7 +70,7 @@ model PrintJob {
   // Raw data backup
   webhookData      String?   // JSON string met alle data van GoedeGepickt
 
-  @@index([status])
+  @@index([printStatus])
   @@index([completedAt])
   @@index([orderUuid])
   @@index([orderNumber])
