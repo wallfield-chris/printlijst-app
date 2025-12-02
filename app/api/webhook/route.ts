@@ -337,20 +337,32 @@ export async function POST(request: NextRequest) {
         if (jobsWithDifferentStatus.length > 0) {
           console.log(`🔄 Updating order status voor ${jobsWithDifferentStatus.length} printjobs: ${jobsWithDifferentStatus[0].orderStatus || 'null'} → ${orderStatus}`)
           
-          // Update alle printjobs van deze order met nieuwe status
-          const updateResult = await prisma.printJob.updateMany({
-            where: { orderUuid },
-            data: { orderStatus }
-          })
+          // Update alle printjobs van deze order met nieuwe status EN herbereken tags
+          for (const job of jobsWithDifferentStatus) {
+            // Herbereken tags met nieuwe status (behoud bestaande tags)
+            const newTags = await applyTagRules(job.sku, orderStatus, job.tags)
+            
+            await prisma.printJob.update({
+              where: { id: job.id },
+              data: { 
+                orderStatus,
+                tags: newTags || null
+              }
+            })
+            
+            if (newTags !== job.tags) {
+              console.log(`   🏷️  Tags ge-update voor ${job.productName}: "${job.tags || 'none'}" → "${newTags || 'none'}"`)
+            }
+          }
           
-          updatedJobs = updateResult.count
-          console.log(`✅ ${updatedJobs} printjobs ge-update naar status: ${orderStatus}`)
+          updatedJobs = jobsWithDifferentStatus.length
+          console.log(`✅ ${updatedJobs} printjobs ge-update naar status: ${orderStatus} met nieuwe tags`)
         } else {
           console.log(`ℹ️  Alle printjobs hebben al status: ${orderStatus}`)
         }
       }
 
-      console.log(`⚠️  Order ${orderUuid} was al geïmporteerd (${existingJobs.length} printjobs)${updatedJobs > 0 ? `, ${updatedJobs} printjobs ge-updated met nieuwe status` : ''}`)
+      console.log(`⚠️  Order ${orderUuid} was al geïmporteerd (${existingJobs.length} printjobs)${updatedJobs > 0 ? `, ${updatedJobs} printjobs ge-updated met nieuwe status en tags` : ''}`)
       
       return NextResponse.json({
         success: true,
