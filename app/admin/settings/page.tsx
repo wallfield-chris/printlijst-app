@@ -27,6 +27,8 @@ export default function SettingsPage() {
   // OrderStatus sync
   const [isSyncingStatus, setIsSyncingStatus] = useState(false)
   const [syncStatusResult, setSyncStatusResult] = useState<{ success: boolean; message: string; details?: any } | null>(null)
+  const [syncLogs, setSyncLogs] = useState<string[]>([])
+  const [showSyncLogs, setShowSyncLogs] = useState(false)
   
   // Debug mode
   const [debugMode, setDebugMode] = useState(false)
@@ -231,14 +233,32 @@ export default function SettingsPage() {
 
     setIsSyncingStatus(true)
     setSyncStatusResult(null)
+    setSyncLogs([])
+    setShowSyncLogs(true)
 
     try {
+      // Open SSE connection for live logs
+      const eventSource = new EventSource("/api/goedgepickt/sync-status-logs")
+      
+      eventSource.onmessage = (event) => {
+        const log = event.data
+        setSyncLogs(prev => [...prev, log])
+      }
+
+      eventSource.onerror = () => {
+        eventSource.close()
+      }
+
+      // Start the sync
       const response = await fetch("/api/goedgepickt/sync-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       })
 
       const data = await response.json()
+      
+      // Close SSE connection
+      eventSource.close()
       
       if (data.success) {
         setSyncStatusResult({ 
@@ -259,9 +279,11 @@ export default function SettingsPage() {
         })
       }
     } catch (error) {
+      console.error("Sync error:", error)
+      setSyncLogs(prev => [...prev, `❌ Error: ${error}`])
       setSyncStatusResult({ 
         success: false, 
-        message: "Netwerkfout - kon OrderStatus sync niet uitvoeren" 
+        message: "Netwerkfout - kon OrderStatus sync niet uitvoeren: " + String(error)
       })
     } finally {
       setIsSyncingStatus(false)
@@ -590,6 +612,34 @@ export default function SettingsPage() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Sync Logs Viewer */}
+              {showSyncLogs && syncLogs.length > 0 && (
+                <div className="mt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-sm font-semibold text-gray-900">📋 Sync Logs</h4>
+                    <button
+                      onClick={() => {
+                        setSyncLogs([])
+                        setShowSyncLogs(false)
+                      }}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      Wis logs
+                    </button>
+                  </div>
+                  <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-xs overflow-auto max-h-96">
+                    {syncLogs.map((log, idx) => (
+                      <div key={idx} className="mb-1 whitespace-pre-wrap break-all">
+                        {log}
+                      </div>
+                    ))}
+                    {isSyncingStatus && (
+                      <div className="animate-pulse text-blue-400">⏳ Bezig met synchroniseren...</div>
+                    )}
+                  </div>
                 </div>
               )}
 

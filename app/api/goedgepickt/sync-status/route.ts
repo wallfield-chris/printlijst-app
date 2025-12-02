@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { GoedGepicktAPI } from "@/lib/goedgepickt"
+import { syncStatusLogger } from "@/lib/sync-status-logger"
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log("🔄 Starting OrderStatus sync...")
+    syncStatusLogger.log("🔄 Starting OrderStatus sync...")
 
     // Haal API key op uit settings
     const apiKeySetting = await prisma.setting.findUnique({
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (!apiKeySetting || !apiKeySetting.value) {
-      console.error("❌ GoedGepickt API key niet geconfigureerd")
+      syncStatusLogger.log("❌ GoedGepickt API key niet geconfigureerd")
       return NextResponse.json(
         { 
           success: false,
@@ -68,9 +69,10 @@ export async function POST(request: NextRequest) {
     })
     
     const orderUuids = sortedOrders.map(job => job.orderUuid).filter(Boolean) as string[]
-    console.log(`📦 Found ${orderUuids.length} unique orders to sync (null status prioritized)`)
+    syncStatusLogger.log(`📦 Found ${orderUuids.length} unique orders to sync (null status prioritized)`)
 
     if (orderUuids.length === 0) {
+      syncStatusLogger.log("ℹ️  No orders to sync")
       return NextResponse.json({
         success: true,
         message: "Geen orders gevonden om te synchroniseren",
@@ -86,20 +88,20 @@ export async function POST(request: NextRequest) {
     // Process orders sequentially with delays to avoid rate limiting
     const DELAY_BETWEEN_ORDERS_MS = 300 // 300ms delay between each order
     
-    console.log(`🔄 Starting sequential sync of ${orderUuids.length} orders (${DELAY_BETWEEN_ORDERS_MS}ms delay between orders)`)
+    syncStatusLogger.log(`🔄 Starting sequential sync of ${orderUuids.length} orders (${DELAY_BETWEEN_ORDERS_MS}ms delay between orders)`)
     
     for (let i = 0; i < orderUuids.length; i++) {
       const orderUuid = orderUuids[i]
       const progress = `[${i + 1}/${orderUuids.length}]`
       
       try {
-        console.log(`${progress} 📦 Syncing order: ${orderUuid}`)
+        syncStatusLogger.log(`${progress} 📦 Syncing order: ${orderUuid}`)
         
         // Haal order data op uit GoedeGepickt
         const order = await api.getOrder(orderUuid)
         
         if (!order) {
-          console.warn(`${progress} ⚠️  Order ${orderUuid} niet gevonden in GoedeGepickt`)
+          syncStatusLogger.log(`${progress} ⚠️  Order ${orderUuid} niet gevonden in GoedeGepickt`)
           errors.push(`Order ${orderUuid} niet gevonden`)
           errorCount++
           continue
@@ -108,7 +110,7 @@ export async function POST(request: NextRequest) {
         const newOrderStatus = order.status
         
         if (!newOrderStatus) {
-          console.warn(`${progress} ⚠️  Geen status gevonden voor order ${orderUuid}`)
+          syncStatusLogger.log(`${progress} ⚠️  Geen status gevonden voor order ${orderUuid}`)
           errors.push(`Geen status voor order ${orderUuid}`)
           errorCount++
           continue
@@ -118,7 +120,7 @@ export async function POST(request: NextRequest) {
         const jobCount = await prisma.printJob.count({
           where: { orderUuid }
         })
-        console.log(`${progress}    📋 Order ${orderUuid} heeft ${jobCount} printjobs, nieuwe status: ${newOrderStatus}`)
+        syncStatusLogger.log(`${progress}    📋 Order ${orderUuid} heeft ${jobCount} printjobs, nieuwe status: ${newOrderStatus}`)
         
         // Update ALLE printjobs voor deze order naar de nieuwe status
         // Maar skip jobs die al completed of cancelled zijn (finale statussen)
@@ -139,10 +141,10 @@ export async function POST(request: NextRequest) {
         })
         
         if (updateResult.count > 0) {
-          console.log(`${progress}    ✅ Updated ${updateResult.count} printjobs`)
+          syncStatusLogger.log(`${progress}    ✅ Updated ${updateResult.count} printjobs`)
           updatedCount += updateResult.count
         } else {
-          console.log(`${progress}    ℹ️  No printjobs needed update (already correct status)`)
+          syncStatusLogger.log(`${progress}    ℹ️  No printjobs needed update (already correct status)`)
         }
 
         // Delay between orders to prevent rate limiting (except after last order)
@@ -151,7 +153,7 @@ export async function POST(request: NextRequest) {
         }
 
       } catch (error) {
-        console.error(`${progress} ❌ Error syncing order ${orderUuid}:`, error)
+        syncStatusLogger.log(`${progress} ❌ Error syncing order ${orderUuid}: ${error}`)
         errors.push(`Order ${orderUuid}: ${error}`)
         errorCount++
         
@@ -162,7 +164,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log(`✅ OrderStatus sync completed: ${updatedCount} printjobs updated, ${errorCount} errors`)
+    syncStatusLogger.log(`✅ OrderStatus sync completed: ${updatedCount} printjobs updated, ${errorCount} errors`)
 
     return NextResponse.json({
       success: true,
@@ -174,7 +176,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error("Error during OrderStatus sync:", error)
+    syncStatusLogger.log(`❌ Error during OrderStatus sync: ${error}`)
     return NextResponse.json(
       { 
         success: false,
