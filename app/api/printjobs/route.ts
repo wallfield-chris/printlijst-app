@@ -2,6 +2,47 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 
+// Helper function to evaluate a condition
+function evaluateCondition(fieldValue: string | null | undefined, condition: string, ruleValue: string): boolean {
+  if (!fieldValue) return false
+  
+  const field = fieldValue.toLowerCase()
+  const value = ruleValue.toLowerCase()
+  
+  switch (condition) {
+    case "starts_with":
+      return field.startsWith(value)
+    case "ends_with":
+      return field.endsWith(value)
+    case "contains":
+      return field.includes(value)
+    case "equals":
+      return field === value
+    default:
+      return false
+  }
+}
+
+// Filter printjobs based on active condition rules
+async function filterByConditionRules(jobs: any[]): Promise<any[]> {
+  const conditionRules = await prisma.conditionRule.findMany({
+    where: { active: true }
+  })
+  
+  // If no rules exist, return all jobs (default behavior)
+  if (conditionRules.length === 0) {
+    return jobs
+  }
+  
+  return jobs.filter(job => {
+    // A job passes if it matches at least one active condition rule
+    return conditionRules.some(rule => {
+      const fieldValue = job[rule.field as keyof typeof job]
+      return evaluateCondition(fieldValue, rule.condition, rule.value)
+    })
+  })
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await auth()
@@ -39,7 +80,7 @@ export async function GET(request: NextRequest) {
       if (to) where.completedAt.lte = new Date(to)
     }
 
-    const printJobs = await prisma.printJob.findMany({
+    let printJobs = await prisma.printJob.findMany({
       where,
       include: {
         completedByUser: {
@@ -55,6 +96,11 @@ export async function GET(request: NextRequest) {
         { receivedAt: 'asc' },
       ],
     })
+
+    // Apply condition rules filtering only for employee role
+    if ((session.user as any).role === "employee") {
+      printJobs = await filterByConditionRules(printJobs)
+    }
 
     return NextResponse.json(printJobs)
 

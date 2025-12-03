@@ -43,6 +43,19 @@ interface PriorityRule {
   updatedAt: string
 }
 
+interface ConditionRule {
+  id: string
+  field: string
+  condition: string
+  value: string
+  operator?: string
+  ruleGroup?: string
+  scope?: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 interface RuleCondition {
   field: string
   condition: string
@@ -60,9 +73,10 @@ interface ProductionSpec {
 }
 
 export default function TagsPage() {
-  const [activeTab, setActiveTab] = useState<"tags" | "priority" | "exclusions" | "specs">("tags")
+  const [activeTab, setActiveTab] = useState<"tags" | "priority" | "conditions" | "exclusions" | "specs">("tags")
   const [tagRules, setTagRules] = useState<TagRule[]>([])
   const [priorityRules, setPriorityRules] = useState<PriorityRule[]>([])
+  const [conditionRules, setConditionRules] = useState<ConditionRule[]>([])
   const [exclusionRules, setExclusionRules] = useState<ExclusionRule[]>([])
   const [productionSpecs, setProductionSpecs] = useState<ProductionSpec[]>([])
   const [loading, setLoading] = useState(true)
@@ -89,6 +103,7 @@ export default function TagsPage() {
   useEffect(() => {
     fetchTagRules()
     fetchPriorityRules()
+    fetchConditionRules()
     fetchExclusionRules()
     fetchProductionSpecs()
   }, [])
@@ -116,6 +131,18 @@ export default function TagsPage() {
       }
     } catch (error) {
       console.error("Error fetching priority rules:", error)
+    }
+  }
+
+  const fetchConditionRules = async () => {
+    try {
+      const response = await fetch("/api/condition-rules")
+      if (response.ok) {
+        const data = await response.json()
+        setConditionRules(data)
+      }
+    } catch (error) {
+      console.error("Error fetching condition rules:", error)
     }
   }
 
@@ -619,6 +646,16 @@ export default function TagsPage() {
             }`}
           >
             Priority
+          </button>
+          <button
+            onClick={() => setActiveTab("conditions")}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === "conditions"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            Conditions
           </button>
           <button
             onClick={() => setActiveTab("exclusions")}
@@ -1266,6 +1303,281 @@ export default function TagsPage() {
                       setScope("product")
                     }}
                     className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Annuleren
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Conditions Tab Content */}
+      {activeTab === "conditions" && (
+        <>
+          {/* Add New Condition Rule Button */}
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="mb-6 flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Nieuwe Condition Regel
+            </button>
+          )}
+
+          {/* Condition Rules List */}
+          {!showAddForm && (
+            <div className="bg-white rounded-lg shadow">
+              <div className="p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Visibility Conditions</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Deze regels bepalen welke printjobs zichtbaar zijn in het werknemer paneel onder "Alles"
+                </p>
+                {conditionRules.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    Nog geen condition regels aangemaakt. Alle printjobs worden getoond.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {conditionRules.map((rule) => (
+                      <div key={rule.id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${rule.active ? 'bg-purple-500' : 'bg-gray-300'}`} />
+                            <span className="text-sm text-gray-600">
+                              Als <span className="font-medium">{rule.field}</span>
+                              {' '}{rule.condition === 'starts_with' ? 'begint met' : rule.condition === 'ends_with' ? 'eindigt met' : rule.condition === 'contains' ? 'bevat' : 'is gelijk aan'}{' '}
+                              <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">{rule.value}</span>
+                            </span>
+                            {rule.scope === 'order' && (
+                              <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                                📦 Hele Order
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              await fetch(`/api/condition-rules/${rule.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ active: !rule.active })
+                              })
+                              fetchConditionRules()
+                            }}
+                            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            title={rule.active ? "Deactiveer" : "Activeer"}
+                          >
+                            {rule.active ? (
+                              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
+                              </svg>
+                            ) : (
+                              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (confirm('Weet je zeker dat je deze regel wilt verwijderen?')) {
+                                await fetch(`/api/condition-rules/${rule.id}`, { method: 'DELETE' })
+                                fetchConditionRules()
+                              }
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Add/Edit Condition Rule Form */}
+          {showAddForm && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Nieuwe Condition Regel
+              </h2>
+              
+              <form onSubmit={async (e) => {
+                e.preventDefault()
+                try {
+                  for (const cond of conditions) {
+                    if (!cond.value.trim()) continue
+                    
+                    await fetch("/api/condition-rules", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        field: cond.field,
+                        condition: cond.condition,
+                        value: cond.value,
+                        operator: cond.operator || "AND",
+                        scope: scope,
+                        active: true
+                      }),
+                    })
+                  }
+                  
+                  await fetchConditionRules()
+                  setShowAddForm(false)
+                  setConditions([{ field: "sku", condition: "starts_with", value: "", operator: "AND" }])
+                  setScope("product")
+                } catch (error) {
+                  console.error("Error saving condition rule:", error)
+                  alert("Er is een fout opgetreden bij het opslaan")
+                }
+              }} className="space-y-4">
+                {/* Scope Selector */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Scope
+                  </label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="scope"
+                        value="product"
+                        checked={scope === "product"}
+                        onChange={(e) => setScope(e.target.value as "product" | "order")}
+                        className="mr-2"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Product</span>
+                        <span className="text-gray-500 block text-xs">Filter alleen voor matchend product</span>
+                      </span>
+                    </label>
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="scope"
+                        value="order"
+                        checked={scope === "order"}
+                        onChange={(e) => setScope(e.target.value as "product" | "order")}
+                        className="mr-2"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Hele Order</span>
+                        <span className="text-gray-500 block text-xs">Filter voor alle producten in order</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Conditions */}
+                {conditions.map((cond, index) => (
+                  <div key={index} className="border border-gray-200 rounded-lg p-4 space-y-4">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Veld</label>
+                        <select
+                          value={cond.field}
+                          onChange={(e) => updateCondition(index, 'field', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          required
+                        >
+                          <option value="sku">SKU</option>
+                          <option value="orderStatus">Order Status</option>
+                          <option value="customerName">Klant Naam</option>
+                          <option value="backfile">Backfile</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Conditie</label>
+                        <select
+                          value={cond.condition}
+                          onChange={(e) => updateCondition(index, 'condition', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          required
+                        >
+                          <option value="starts_with">Begint met</option>
+                          <option value="ends_with">Eindigt met</option>
+                          <option value="contains">Bevat</option>
+                          <option value="equals">Is gelijk aan</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Waarde</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={cond.value}
+                            onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            required
+                          />
+                          {conditions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeCondition(index)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {index < conditions.length - 1 && (
+                      <div className="flex justify-center">
+                        <select
+                          value={cond.operator || "OR"}
+                          onChange={(e) => updateCondition(index, "operator", e.target.value)}
+                          className="bg-purple-50 px-3 py-1 rounded text-xs font-semibold text-purple-600 border-0 cursor-pointer hover:bg-purple-100 focus:ring-2 focus:ring-purple-500"
+                        >
+                          <option value="OR">OF</option>
+                          <option value="AND">EN</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={addCondition}
+                  className="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 font-medium"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Conditie toevoegen
+                </button>
+
+                <div className="flex gap-2 pt-4 border-t">
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  >
+                    Toevoegen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddForm(false)
+                      setConditions([{ field: "sku", condition: "starts_with", value: "", operator: "AND" }])
+                      setScope("product")
+                    }}
+                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                   >
                     Annuleren
                   </button>

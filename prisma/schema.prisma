@@ -137,6 +137,23 @@ model ExclusionRule {
   @@index([ruleGroup])
 }
 
+model ConditionRule {
+  id        String   @id @default(cuid())
+  field     String   // Welk veld te checken (bijv. "sku", "orderStatus", "customerName")
+  condition String   // Conditie type ("starts_with", "ends_with", "contains", "equals")
+  value     String   // De waarde om te checken
+  operator  String   @default("AND") // Operator voor volgende conditie ("AND", "OR")
+  ruleGroup String?  // Groepeer meerdere condities samen (zelfde ID = 1 regel)
+  scope     String   @default("product") // "product" = alleen dit product, "order" = hele order
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([field])
+  @@index([active])
+  @@index([ruleGroup])
+}
+
 model ListView {
   id        String   @id @default(cuid())
   name      String   // Naam van de tab (bijv. "Glas", "Hout")
