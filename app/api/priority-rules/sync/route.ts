@@ -16,8 +16,12 @@ function checkCondition(fieldValue: string | null | undefined, condition: string
       return field.endsWith(value)
     case "contains":
       return field.includes(value)
+    case "not_contains":
+      return !field.includes(value)
     case "equals":
       return field === value
+    case "not_equals":
+      return field !== value
     default:
       return false
   }

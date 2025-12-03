@@ -59,8 +59,14 @@ async function applyTagRules(
           case "contains":
             matches = fieldValue.includes(rule.value)
             break
+          case "not_contains":
+            matches = !fieldValue.includes(rule.value)
+            break
           case "equals":
             matches = fieldValue === rule.value
+            break
+          case "not_equals":
+            matches = fieldValue !== rule.value
             break
         }
       }
@@ -134,8 +140,14 @@ async function getOrderWideTags(
             case "contains":
               skuMatches = sku.includes(rule.value)
               break
+            case "not_contains":
+              skuMatches = !sku.includes(rule.value)
+              break
             case "equals":
               skuMatches = sku === rule.value
+              break
+            case "not_equals":
+              skuMatches = sku !== rule.value
               break
           }
           if (skuMatches) {
@@ -154,8 +166,14 @@ async function getOrderWideTags(
           case "contains":
             matches = orderStatus.includes(rule.value)
             break
+          case "not_contains":
+            matches = !orderStatus.includes(rule.value)
+            break
           case "equals":
             matches = orderStatus === rule.value
+            break
+          case "not_equals":
+            matches = orderStatus !== rule.value
             break
         }
       }

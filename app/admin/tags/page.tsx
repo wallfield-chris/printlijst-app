@@ -593,8 +593,12 @@ export default function TagsPage() {
         return "eindigt met"
       case "contains":
         return "bevat"
+      case "not_contains":
+        return "bevat niet"
       case "equals":
         return "is gelijk aan"
+      case "not_equals":
+        return "is niet gelijk aan"
       default:
         return condition
     }
@@ -825,7 +829,9 @@ export default function TagsPage() {
                             <option value="starts_with">begint met</option>
                             <option value="ends_with">eindigt met</option>
                             <option value="contains">bevat</option>
+                            <option value="not_contains">bevat niet</option>
                             <option value="equals">is gelijk aan</option>
+                            <option value="not_equals">is niet gelijk aan</option>
                           </select>
                         </div>
 
@@ -1082,7 +1088,7 @@ export default function TagsPage() {
                           <div className="flex items-center gap-3">
                             <span className="text-sm text-gray-600">
                               Als <span className="font-medium">{rule.field}</span>
-                              {' '}{rule.condition === 'starts_with' ? 'begint met' : rule.condition === 'ends_with' ? 'eindigt met' : rule.condition === 'contains' ? 'bevat' : 'is gelijk aan'}{' '}
+                              {' '}{getConditionLabel(rule.condition)}{' '}
                               <span className="font-medium">"{rule.value}"</span>
                             </span>
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -1190,7 +1196,9 @@ export default function TagsPage() {
                           <option value="starts_with">Begint met</option>
                           <option value="ends_with">Eindigt met</option>
                           <option value="contains">Bevat</option>
+                          <option value="not_contains">Bevat niet</option>
                           <option value="equals">Is gelijk aan</option>
+                          <option value="not_equals">Is niet gelijk aan</option>
                         </select>
                       </div>
 
@@ -1350,7 +1358,7 @@ export default function TagsPage() {
                             <div className={`w-2 h-2 rounded-full ${rule.active ? 'bg-purple-500' : 'bg-gray-300'}`} />
                             <span className="text-sm text-gray-600">
                               Als <span className="font-medium">{rule.field}</span>
-                              {' '}{rule.condition === 'starts_with' ? 'begint met' : rule.condition === 'ends_with' ? 'eindigt met' : rule.condition === 'contains' ? 'bevat' : 'is gelijk aan'}{' '}
+                              {' '}{getConditionLabel(rule.condition)}{' '}
                               <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">{rule.value}</span>
                             </span>
                             {rule.scope === 'order' && (
@@ -1508,7 +1516,9 @@ export default function TagsPage() {
                           <option value="starts_with">Begint met</option>
                           <option value="ends_with">Eindigt met</option>
                           <option value="contains">Bevat</option>
+                          <option value="not_contains">Bevat niet</option>
                           <option value="equals">Is gelijk aan</option>
+                          <option value="not_equals">Is niet gelijk aan</option>
                         </select>
                       </div>
 
@@ -1676,7 +1686,9 @@ export default function TagsPage() {
                                 <option value="starts_with">begint met</option>
                                 <option value="ends_with">eindigt met</option>
                                 <option value="contains">bevat</option>
+                                <option value="not_contains">bevat niet</option>
                                 <option value="equals">is gelijk aan</option>
+                                <option value="not_equals">is niet gelijk aan</option>
                               </select>
                             </div>
 
