@@ -39,6 +39,7 @@ export default function PrintJobsPage() {
   const [printJobs, setPrintJobs] = useState<PrintJob[]>([])
   const [listViews, setListViews] = useState<ListView[]>([])
   const [activeTab, setActiveTab] = useState<string>("all")
+  const [priorityFilter, setPriorityFilter] = useState<"normal" | "urgent">("normal")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selectedJob, setSelectedJob] = useState<PrintJob | null>(null)
@@ -127,16 +128,27 @@ export default function PrintJobsPage() {
   }
 
   const getFilteredJobs = () => {
+    // First filter by priority
+    let filtered = printJobs.filter(job => {
+      if (priorityFilter === "urgent") {
+        return job.priority === "urgent"
+      } else {
+        // Normal priority includes: low, normal, high (everything except urgent)
+        return job.priority !== "urgent"
+      }
+    })
+
+    // Then filter by list view/tab
     if (activeTab === "all") {
-      return printJobs
+      return filtered
     }
 
     const activeView = listViews.find(view => view.id === activeTab)
-    if (!activeView) return printJobs
+    if (!activeView) return filtered
 
     const viewTags = activeView.tags.split(",").filter(t => t)
     
-    return printJobs.filter(job => {
+    return filtered.filter(job => {
       if (!job.tags) return false
       const jobTags = job.tags.split(",").filter(t => t)
       return viewTags.some(tag => jobTags.includes(tag))
@@ -278,6 +290,32 @@ export default function PrintJobsPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Priority Filter Tabs */}
+        <div className="mb-4 bg-white rounded-lg shadow-sm p-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPriorityFilter("normal")}
+              className={`flex-1 py-3 px-4 rounded-md font-medium text-sm transition-colors ${
+                priorityFilter === "normal"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              Normal Priority
+            </button>
+            <button
+              onClick={() => setPriorityFilter("urgent")}
+              className={`flex-1 py-3 px-4 rounded-md font-medium text-sm transition-colors ${
+                priorityFilter === "urgent"
+                  ? "bg-red-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              Urgent Priority
+            </button>
+          </div>
+        </div>
+
         {/* Tabs */}
         {listViews.length > 0 && (
           <div className="mb-6 border-b border-gray-200">
@@ -290,12 +328,19 @@ export default function PrintJobsPage() {
                     : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                 }`}
               >
-                Alle ({printJobs.length})
+                Alle ({printJobs.filter(job => priorityFilter === "urgent" ? job.priority === "urgent" : job.priority !== "urgent").length})
               </button>
               {listViews.map((view) => {
                 const viewTags = view.tags.split(",").filter(t => t)
                 const count = printJobs.filter(job => {
+                  // Apply priority filter
+                  const passesPriorityFilter = priorityFilter === "urgent" 
+                    ? job.priority === "urgent" 
+                    : job.priority !== "urgent"
+                  
+                  if (!passesPriorityFilter) return false
                   if (!job.tags) return false
+                  
                   const jobTags = job.tags.split(",").filter(t => t)
                   return viewTags.some(tag => jobTags.includes(tag))
                 }).length
