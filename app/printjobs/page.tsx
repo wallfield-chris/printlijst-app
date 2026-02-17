@@ -43,6 +43,7 @@ export default function PrintJobsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selectedJob, setSelectedJob] = useState<PrintJob | null>(null)
+  const [syncing, setSyncing] = useState(false)
   const backfileCanvasRef = useRef<HTMLCanvasElement>(null)
   const skuCanvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -124,6 +125,69 @@ export default function PrintJobsPage() {
       }
     } catch (err) {
       console.error("Error fetching list views:", err)
+    }
+  }
+
+  const syncOrdersFromGoedgepickt = async () => {
+    if (syncing) return
+    
+    if (!confirm("Orders ophalen uit GoedGepickt? Dit kan even duren.")) {
+      return
+    }
+
+    try {
+      setSyncing(true)
+      setError("")
+      
+      const response = await fetch("/api/goedgepickt/sync-orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "Fout bij ophalen van orders")
+      }
+
+      // Toon gedetailleerde feedback
+      let message = `✅ Sync compleet!\n\n`
+      message += `📥 ${data.stats.imported} jobs geïmporteerd\n`
+      
+      if (data.stats.duplicates > 0) {
+        message += `⏭️  ${data.stats.duplicates} duplicate orders overgeslagen\n`
+      }
+      
+      if (data.stats.excluded > 0) {
+        message += `⛔ ${data.stats.excluded} producten geëxcludeerd door rules\n`
+      }
+      
+      if (data.debug) {
+        console.log("Debug info:", data.debug)
+        message += `\n📊 ${data.debug.ordersFromApi} orders opgehaald van GoedGepickt`
+        
+        if (data.debug.ordersFromApi === 0) {
+          message += "\n\n⚠️ Geen backorder orders gevonden in GoedGepickt."
+          if (!data.debug.backorderRuleFound) {
+            message += "\n❌ Backorder condition rule niet gevonden!"
+          }
+        }
+      }
+      
+      if (data.stats.errors > 0) {
+        message += `\n⚠️ ${data.stats.errors} fouten`
+      }
+
+      alert(message)
+      await fetchPrintJobs()
+    } catch (err: any) {
+      setError(err.message || "Kon orders niet ophalen uit GoedGepickt")
+      alert(`❌ Fout: ${err.message || "Kon orders niet ophalen uit GoedGepickt"}`)
+      console.error(err)
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -367,12 +431,21 @@ export default function PrintJobsPage() {
           <h2 className="text-xl font-semibold text-gray-800">
             Actieve Printjobs ({getFilteredJobs().length})
           </h2>
-          <button
-            onClick={fetchPrintJobs}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            ↻ Vernieuwen
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={syncOrdersFromGoedgepickt}
+              disabled={syncing}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {syncing ? "⏳ Bezig..." : "📦 Orders Ophalen"}
+            </button>
+            <button
+              onClick={fetchPrintJobs}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              ↻ Vernieuwen
+            </button>
+          </div>
         </div>
 
         {error && (
