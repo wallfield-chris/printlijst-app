@@ -251,12 +251,15 @@ export default function PrintJobsPage() {
   const handleCompleteAndNext = async () => {
     if (!selectedJob) return
     
+    // Gebruik gefilterde lijst zodat we in dezelfde list view blijven
+    const filteredJobs = getFilteredJobs()
+    const currentIndex = filteredJobs.findIndex(job => job.id === selectedJob.id)
+    
     // Update status to completed
     await updateJobStatus(selectedJob.id, "completed")
     
-    // Find next job
-    const currentIndex = printJobs.findIndex(job => job.id === selectedJob.id)
-    const nextJob = printJobs[currentIndex + 1]
+    // Find next job in the same filtered list
+    const nextJob = filteredJobs[currentIndex + 1]
     
     if (nextJob) {
       setSelectedJob(nextJob)
@@ -287,11 +290,13 @@ export default function PrintJobsPage() {
         throw new Error("Fout bij markeren als missing file")
       }
 
-      // Fetch updated jobs and move to next
+      // Fetch updated jobs and move to next in same filtered list
+      const filteredJobs = getFilteredJobs()
+      const currentIndex = filteredJobs.findIndex(job => job.id === selectedJob.id)
+      
       await fetchPrintJobs()
       
-      const currentIndex = printJobs.findIndex(job => job.id === selectedJob.id)
-      const nextJob = printJobs[currentIndex + 1]
+      const nextJob = filteredJobs[currentIndex + 1]
       
       if (nextJob) {
         setSelectedJob(nextJob)

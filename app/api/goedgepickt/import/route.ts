@@ -116,6 +116,9 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Gebruik order createDate als receivedAt datum
+        const orderDate = order.createDate ? new Date(order.createDate) : new Date()
+
         // Maak printjob
         const printJob = await prisma.printJob.create({
           data: {
@@ -135,6 +138,7 @@ export async function POST(request: NextRequest) {
             notes: order.notes,
             printStatus: "pending",
             backorder: isBackorder,
+            receivedAt: orderDate,
             webhookData: JSON.stringify(
               { order, product },
               null,

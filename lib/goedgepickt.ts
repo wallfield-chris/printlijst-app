@@ -131,6 +131,14 @@ export class GoedGepicktAPI {
     }
   }
 
+  // Bewaar laatste paginatie info
+  public lastPaginationInfo: {
+    totalItems: number
+    itemsPerPage: number
+    currentPage: number
+    lastPage: number
+  } | null = null
+
   /**
    * Haal alle orders op met filters
    */
@@ -141,11 +149,13 @@ export class GoedGepicktAPI {
     offset?: number
     page?: number
     per_page?: number
+    createdAfter?: string
   }): Promise<GoedGepicktOrder[]> {
     try {
       const params = new URLSearchParams()
       if (filters?.status) params.append("status", filters.status)
       if (filters?.orderstatus) params.append("orderstatus", filters.orderstatus)
+      if (filters?.createdAfter) params.append("createdAfter", filters.createdAfter)
       
       // Probeer verschillende limit parameters
       if (filters?.limit) {
@@ -173,6 +183,7 @@ export class GoedGepicktAPI {
         // Log pagination info if available
         if (data.pageInfo) {
           console.log(`📄 Pagination:`, data.pageInfo)
+          this.lastPaginationInfo = data.pageInfo
         }
         
         // De API kan verschillende structuren teruggeven

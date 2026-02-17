@@ -90,16 +90,40 @@ export async function POST(request: NextRequest) {
     if (backorderRule) {
       debugInfo.backorderRuleFound = true
       console.log("🔍 Fetching backorder orders from GoedGepickt API...")
-      console.log("   Using orderstatus=backorder as query parameter")
       console.log(`🔑 Using API key: ${apiKeySetting.value.substring(0, 10)}...`)
       
-      // GoedGepickt API gebruikt paginering - haal eerste 10 pagina's op (250 orders)
-      const allOrders = []
-      const maxPages = 10 // Haal eerste 10 pagina's op (250 orders)
+      // Gebruik createdAfter filter om alleen recente orders op te halen
+      // Standaard: laatste 30 dagen, maar haal ALLE pagina's op
+      const daysBack = 30
+      const createdAfter = new Date()
+      createdAfter.setDate(createdAfter.getDate() - daysBack)
+      const createdAfterStr = createdAfter.toISOString().split('T')[0] // YYYY-MM-DD
       
-      for (let page = 1; page <= maxPages; page++) {
-        console.log(`📄 Fetching page ${page}/${maxPages}...`)
-        const pageOrders = await api.getOrders({ orderstatus: "backorder", page })
+      console.log(`📅 Fetching orders created after ${createdAfterStr} (last ${daysBack} days)`)
+      
+      // Stap 1: Haal eerste pagina op voor paginatie info
+      const firstPageOrders = await api.getOrders({ 
+        orderstatus: "backorder", 
+        createdAfter: createdAfterStr,
+        page: 1 
+      })
+      
+      const paginationInfo = api.lastPaginationInfo
+      const totalPages = paginationInfo?.lastPage || 1
+      const totalItems = paginationInfo?.totalItems || firstPageOrders.length
+      
+      console.log(`📊 Found ${totalItems} orders across ${totalPages} pages`)
+      
+      // Stap 2: Haal ALLE pagina's op (van achteren naar voren voor nieuwste eerst)
+      const allOrders = [...firstPageOrders]
+      
+      for (let page = 2; page <= totalPages; page++) {
+        console.log(`📄 Fetching page ${page}/${totalPages}...`)
+        const pageOrders = await api.getOrders({ 
+          orderstatus: "backorder", 
+          createdAfter: createdAfterStr,
+          page 
+        })
         
         if (pageOrders.length === 0) {
           console.log("   No more orders found")
@@ -110,12 +134,21 @@ export async function POST(request: NextRequest) {
         console.log(`   Found ${pageOrders.length} orders (total: ${allOrders.length})`)
       }
       
-      const orders = allOrders
-      debugInfo.ordersFromApi = orders.length
+      // Stap 3: Filter alleen orders die daadwerkelijk status 'backorder' hebben
+      // De API retourneert ook orders die ooit backorder waren maar nu een andere status hebben
+      const backorderOnly = allOrders.filter(order => order.status === 'backorder')
+      console.log(`🔍 ${allOrders.length} orders opgehaald, ${backorderOnly.length} hebben daadwerkelijk status 'backorder'`)
       
-      console.log(`📥 Found ${orders.length} backorder orders from API in total`)
+      const orders = backorderOnly
+      debugInfo.ordersFromApi = allOrders.length
+      debugInfo.actualBackorderOrders = backorderOnly.length
+      debugInfo.filteredOut = allOrders.length - backorderOnly.length
+      debugInfo.createdAfter = createdAfterStr
+      debugInfo.totalPages = totalPages
       
-      let matchingOrders: typeof orders = orders // Alle orders matchen al want ze komen van backorder filter
+      console.log(`📥 Processing ${orders.length} actual backorder orders`)
+      
+      let matchingOrders: typeof orders = orders
       debugInfo.matchingOrders = matchingOrders.length
 
       for (const order of matchingOrders) {
@@ -242,6 +275,9 @@ export async function POST(request: NextRequest) {
               const allTags = [...appliedTags, ...orderTags]
               const tagsString = allTags.length > 0 ? allTags.join(", ") : null
 
+              // Gebruik order createDate als receivedAt datum
+              const orderDate = order.createDate ? new Date(order.createDate) : new Date()
+
               // Maak printjob
               const printJob = await prisma.printJob.create({
                 data: {
@@ -260,6 +296,7 @@ export async function POST(request: NextRequest) {
                   printStatus: "pending",
                   orderStatus: order.status,
                   backorder: order.status === "backorder",
+                  receivedAt: orderDate,
                   webhookData: JSON.stringify({ order, product }, null, 2),
                 },
               })
