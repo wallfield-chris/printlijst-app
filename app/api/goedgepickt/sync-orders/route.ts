@@ -208,10 +208,40 @@ export async function POST(request: NextRequest) {
                 continue
               }
 
+              // Check of product al gepickt is (= op voorraad, niet printen)
+              if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
+                console.log(`   ✅ Already picked: ${product.sku || 'no-sku'} - ${product.productName} (picked: ${product.pickedQuantity}/${product.productQuantity})`)
+                totalExcluded++
+                debugInfo.excludedProducts++
+                continue
+              }
+
+              // Check stock via product details - alleen printen als NIET op voorraad
+              if (product.productUuid) {
+                try {
+                  const stockDetails = await api.getProduct(product.productUuid)
+                  if (stockDetails) {
+                    const freeStock = stockDetails.stock?.freeStock ?? (stockDetails as any).freeStock ?? 0
+                    const totalStock = stockDetails.stock?.totalStock ?? (stockDetails as any).totalStock ?? 0
+                    
+                    // Als er voldoende voorraad is, niet printen
+                    if (freeStock >= (product.productQuantity || 1)) {
+                      console.log(`   📦 In stock: ${product.sku || 'no-sku'} - ${product.productName} (freeStock: ${freeStock}, needed: ${product.productQuantity})`)
+                      totalExcluded++
+                      debugInfo.excludedProducts++
+                      continue
+                    }
+                  }
+                } catch (error) {
+                  console.warn(`   ⚠️  Could not check stock for ${product.sku}, importing anyway`)
+                }
+              }
+
               orderHasProducts = true
 
-              // Haal product details op voor supplierSku
+              // Haal product details op voor supplierSku en afbeelding
               let supplierSku: string | null = null
+              let imageUrl: string | null = null
               if (product.productUuid) {
                 try {
                   const productDetails = await api.getProduct(product.productUuid)
@@ -220,6 +250,10 @@ export async function POST(request: NextRequest) {
                       supplierSku = productDetails.supplier.supplierSku
                     } else if (productDetails.supplierSku) {
                       supplierSku = productDetails.supplierSku
+                    }
+                    // Haal product afbeelding op (skip placeholder)
+                    if (productDetails.picture && !productDetails.picture.includes('image_placeholder')) {
+                      imageUrl = productDetails.picture
                     }
                   }
                 } catch (error) {
@@ -245,24 +279,44 @@ export async function POST(request: NextRequest) {
               }
 
               // Bepaal priority op basis van priority rules
+              // Check zowel het huidige product als alle andere producten in de order (voor scope: order)
               let priority = "normal"
               for (const rule of priorityRules) {
-                let fieldValue = ""
-                
-                if (rule.field === "sku") {
-                  fieldValue = product.sku || ""
-                } else if (rule.field === "orderStatus") {
-                  fieldValue = order.status || ""
-                } else if (rule.field === "customerName") {
-                  fieldValue = order.customerName || order.customer?.name || ""
-                }
+                if (rule.scope === "order") {
+                  // Bij scope 'order': check ALLE producten in de order
+                  const allProducts = order.products || []
+                  for (const p of allProducts) {
+                    let fieldValue = ""
+                    
+                    if (rule.field === "sku") {
+                      fieldValue = p.sku || ""
+                    } else if (rule.field === "orderStatus") {
+                      fieldValue = order.status || ""
+                    } else if (rule.field === "customerName") {
+                      fieldValue = order.customerName || order.customer?.name || ""
+                    }
 
-                const matches = checkCondition(fieldValue, rule.condition, rule.value)
-                if (matches) {
-                  priority = rule.priority
-                  if (rule.scope === "order") {
-                    // Apply to all products in this order
-                    break
+                    if (checkCondition(fieldValue, rule.condition, rule.value)) {
+                      priority = rule.priority
+                      console.log(`   🔴 Priority ${rule.priority}: matched ${rule.field} "${fieldValue}" via product ${p.sku} (scope: order)`)
+                      break
+                    }
+                  }
+                  if (priority !== "normal") break
+                } else {
+                  // Bij scope 'product': check alleen het huidige product
+                  let fieldValue = ""
+                  
+                  if (rule.field === "sku") {
+                    fieldValue = product.sku || ""
+                  } else if (rule.field === "orderStatus") {
+                    fieldValue = order.status || ""
+                  } else if (rule.field === "customerName") {
+                    fieldValue = order.customerName || order.customer?.name || ""
+                  }
+
+                  if (checkCondition(fieldValue, rule.condition, rule.value)) {
+                    priority = rule.priority
                   }
                 }
               }
@@ -287,6 +341,7 @@ export async function POST(request: NextRequest) {
                   productName: product.productName || "Onbekend product",
                   sku: product.sku,
                   backfile: supplierSku,
+                  imageUrl,
                   quantity: product.productQuantity || 1,
                   pickedQuantity: product.pickedQuantity || 0,
                   priority,

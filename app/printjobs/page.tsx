@@ -17,6 +17,7 @@ interface PrintJob {
   completedAt?: string
   backfile?: string | null
   sku?: string | null
+  imageUrl?: string | null
   tags?: string | null
   missingFile?: boolean
   completedByUser?: {
@@ -39,7 +40,6 @@ export default function PrintJobsPage() {
   const [printJobs, setPrintJobs] = useState<PrintJob[]>([])
   const [listViews, setListViews] = useState<ListView[]>([])
   const [activeTab, setActiveTab] = useState<string>("all")
-  const [priorityFilter, setPriorityFilter] = useState<"normal" | "urgent">("normal")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selectedJob, setSelectedJob] = useState<PrintJob | null>(null)
@@ -192,30 +192,26 @@ export default function PrintJobsPage() {
   }
 
   const getFilteredJobs = () => {
-    // First filter by priority
-    let filtered = printJobs.filter(job => {
-      if (priorityFilter === "urgent") {
-        return job.priority === "urgent"
-      } else {
-        // Normal priority includes: low, normal, high (everything except urgent)
-        return job.priority !== "urgent"
-      }
-    })
+    let filtered = printJobs
 
-    // Then filter by list view/tab
-    if (activeTab === "all") {
-      return filtered
+    // Filter by list view/tab
+    if (activeTab !== "all") {
+      const activeView = listViews.find(view => view.id === activeTab)
+      if (activeView) {
+        const viewTags = activeView.tags.split(",").filter(t => t)
+        filtered = filtered.filter(job => {
+          if (!job.tags) return false
+          const jobTags = job.tags.split(",").filter(t => t)
+          return viewTags.some(tag => jobTags.includes(tag))
+        })
+      }
     }
 
-    const activeView = listViews.find(view => view.id === activeTab)
-    if (!activeView) return filtered
-
-    const viewTags = activeView.tags.split(",").filter(t => t)
-    
-    return filtered.filter(job => {
-      if (!job.tags) return false
-      const jobTags = job.tags.split(",").filter(t => t)
-      return viewTags.some(tag => jobTags.includes(tag))
+    // Sort urgent jobs first, then by receivedAt
+    return [...filtered].sort((a, b) => {
+      if (a.priority === "urgent" && b.priority !== "urgent") return -1
+      if (a.priority !== "urgent" && b.priority === "urgent") return 1
+      return new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime()
     })
   }
 
@@ -359,32 +355,6 @@ export default function PrintJobsPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Priority Filter Tabs */}
-        <div className="mb-4 bg-white rounded-lg shadow-sm p-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPriorityFilter("normal")}
-              className={`flex-1 py-3 px-4 rounded-md font-medium text-sm transition-colors ${
-                priorityFilter === "normal"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
-            >
-              Normal Priority
-            </button>
-            <button
-              onClick={() => setPriorityFilter("urgent")}
-              className={`flex-1 py-3 px-4 rounded-md font-medium text-sm transition-colors ${
-                priorityFilter === "urgent"
-                  ? "bg-red-600 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
-            >
-              Urgent Priority
-            </button>
-          </div>
-        </div>
-
         {/* Tabs */}
         {listViews.length > 0 && (
           <div className="mb-6 border-b border-gray-200">
@@ -397,19 +367,12 @@ export default function PrintJobsPage() {
                     : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                 }`}
               >
-                Alle ({printJobs.filter(job => priorityFilter === "urgent" ? job.priority === "urgent" : job.priority !== "urgent").length})
+                Alle ({printJobs.length})
               </button>
               {listViews.map((view) => {
                 const viewTags = view.tags.split(",").filter(t => t)
                 const count = printJobs.filter(job => {
-                  // Apply priority filter
-                  const passesPriorityFilter = priorityFilter === "urgent" 
-                    ? job.priority === "urgent" 
-                    : job.priority !== "urgent"
-                  
-                  if (!passesPriorityFilter) return false
                   if (!job.tags) return false
-                  
                   const jobTags = job.tags.split(",").filter(t => t)
                   return viewTags.some(tag => jobTags.includes(tag))
                 }).length
@@ -466,10 +429,13 @@ export default function PrintJobsPage() {
         ) : (
           <div className="grid gap-4">
             {getFilteredJobs().map((job) => {
+              const isUrgent = job.priority === "urgent"
               const cardColor = job.missingFile 
                 ? "bg-red-50 border-2 border-red-200" 
                 : job.printStatus === "completed"
                 ? "bg-green-50 border-2 border-green-200"
+                : isUrgent
+                ? "bg-red-50 border-l-4 border-l-red-500 border border-red-200"
                 : "bg-white"
               
               return (
@@ -484,9 +450,11 @@ export default function PrintJobsPage() {
                       <h3 className="text-lg font-semibold text-gray-900">
                         Order #{job.orderNumber}
                       </h3>
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getPriorityColor(job.priority)}`}>
-                        {job.priority.toUpperCase()}
-                      </span>
+                      {job.priority === "urgent" && (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white animate-pulse">
+                          URGENT
+                        </span>
+                      )}
                     </div>
                     <p className="text-gray-700 mb-1">
                       <span className="font-medium">Product:</span> {job.productName}
@@ -532,6 +500,15 @@ export default function PrintJobsPage() {
               </div>
 
               <div className="mb-6">
+                {selectedJob.imageUrl && (
+                  <div className="mb-4 flex justify-center">
+                    <img 
+                      src={selectedJob.imageUrl} 
+                      alt={selectedJob.productName}
+                      className="max-h-48 max-w-full object-contain rounded-lg border border-gray-200"
+                    />
+                  </div>
+                )}
                 <p className="text-gray-700 mb-2">
                   <span className="font-medium">Product:</span> {selectedJob.productName}
                 </p>

@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
                 // Bepaal of product in backorder is en haal supplierSku op
         let isBackorder = false
         let supplierSku: string | null = null
+        let imageUrl: string | null = null
         
         if (product.productUuid) {
           try {
@@ -89,6 +90,11 @@ export async function POST(request: NextRequest) {
                 supplierSku = productDetails.supplier.supplierSku
               } else if (productDetails.supplierSku) {
                 supplierSku = productDetails.supplierSku
+              }
+              
+              // Haal product afbeelding op (skip placeholder)
+              if (productDetails.picture && !productDetails.picture.includes('image_placeholder')) {
+                imageUrl = productDetails.picture
               }
               
               // Check voorraad
@@ -128,6 +134,7 @@ export async function POST(request: NextRequest) {
             productName: product.productName || "Onbekend product",
             sku: product.sku,
             backfile: supplierSku,
+            imageUrl,
             quantity: product.productQuantity || 1,
             pickedQuantity: product.pickedQuantity || 0,
             priority,

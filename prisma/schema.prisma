@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DB_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -43,6 +43,7 @@ model PrintJob {
   productName      String
   sku              String?   // SKU van het product
   backfile         String?   // Supplier SKU (backfile)
+  imageUrl         String?   // Product afbeelding URL uit GoedGepickt
   quantity         Int       // Bestelde hoeveelheid
   pickedQuantity   Int?      // Gepickte hoeveelheid
   

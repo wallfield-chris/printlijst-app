@@ -270,6 +270,14 @@ async function main() {
       operator: 'AND',
       active: true,
     },
+    {
+      field: 'sku',
+      condition: 'contains',
+      value: 'SHIPPING-NEXT-DAY',
+      reason: 'Verzendproduct',
+      operator: 'AND',
+      active: true,
+    },
   ]
 
   for (const rule of exclusionRules) {
