@@ -756,26 +756,35 @@ export default function PrintJobsPage() {
                   className={`${cardColor} rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer`}
                 >
                 <div className="flex justify-between items-start mb-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Order #{job.orderNumber}
-                      </h3>
-                      {job.priority === "urgent" && (
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white animate-pulse">
-                          URGENT
-                        </span>
-                      )}
+                  <div className="flex gap-3 flex-1">
+                    {job.imageUrl && (
+                      <img
+                        src={job.imageUrl}
+                        alt={job.productName}
+                        className="w-14 h-14 object-contain rounded-lg border border-gray-200 bg-white flex-shrink-0 mt-0.5"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          Order #{job.orderNumber}
+                        </h3>
+                        {job.priority === "urgent" && (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white animate-pulse">
+                            URGENT
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-gray-700 mb-1 truncate">
+                        <span className="font-medium">Product:</span> {job.productName}
+                      </p>
+                      <p className="text-gray-600 text-sm">
+                        <span className="font-medium">Aantal:</span> {job.quantity}
+                      </p>
+                      <p className="text-gray-500 text-xs mt-2">
+                        Ontvangen: {new Date(job.receivedAt).toLocaleString("nl-NL")}
+                      </p>
                     </div>
-                    <p className="text-gray-700 mb-1">
-                      <span className="font-medium">Product:</span> {job.productName}
-                    </p>
-                    <p className="text-gray-600 text-sm">
-                      <span className="font-medium">Aantal:</span> {job.quantity}
-                    </p>
-                    <p className="text-gray-500 text-xs mt-2">
-                      Ontvangen: {new Date(job.receivedAt).toLocaleString("nl-NL")}
-                    </p>
                   </div>
 
                   <div className="flex flex-col gap-2 ml-4">
