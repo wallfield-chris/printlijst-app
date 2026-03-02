@@ -15,7 +15,7 @@ export async function PATCH(
 
     const { id } = await params
     const body = await request.json()
-    const { printStatus, missingFile } = body
+    const { printStatus, missingFile, notes } = body
 
     const updateData: any = {}
     
@@ -25,6 +25,10 @@ export async function PATCH(
     
     if (missingFile !== undefined) {
       updateData.missingFile = missingFile
+    }
+
+    if (notes !== undefined) {
+      updateData.notes = notes
     }
 
     if (printStatus === "in_progress" && !body.startedAt) {
