@@ -239,7 +239,7 @@ export default function MissingFilesPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-500 truncate max-w-[200px]">
-                        {job.notes || <span className="text-gray-300 italic">Geen notities</span>}
+                        {job.notes || <span className="text-gray-400 italic">Geen notities</span>}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -352,7 +352,7 @@ export default function MissingFilesPage() {
                   onChange={(e) => setEditNotes(e.target.value)}
                   rows={4}
                   placeholder="Schrijf hier wat er aan de hand is..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
                 />
                 <div className="flex items-center justify-between mt-2">
                   <p className="text-xs text-gray-400">
