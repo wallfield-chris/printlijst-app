@@ -152,6 +152,8 @@ export default function PrintJobsPage() {
     }
   }, [session])
 
+  // Genereer barcodes voor het geselecteerde job
+  // Moet ook opnieuw draaien als activeTab verandert, omdat de canvas opnieuw gemount kan worden
   useEffect(() => {
     if (selectedJob?.backfile && backfileCanvasRef.current) {
       try {
@@ -183,7 +185,7 @@ export default function PrintJobsPage() {
         console.error('Error generating SKU barcode:', err)
       }
     }
-  }, [selectedJob])
+  }, [selectedJob, activeTab])
 
   // Haal afbeelding op als die nog niet in de DB staat
   useEffect(() => {
