@@ -230,18 +230,27 @@ export default function PrintJobsPage() {
       setRefreshing(true)
       setError("")
 
-      // Full reset sync: verwijder alle pending jobs en doe een schone import
+      // Stap 1: Sync statussen — verwijder orders die niet meer backorder zijn,
+      // al gepickt zijn, of weer op voorraad zijn
+      const statusResponse = await fetch("/api/printjobs/sync-statuses", {
+        method: "POST",
+      })
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json()
+        if (statusData.deleted > 0 || statusData.updated > 0) {
+          console.log(`🔄 Status sync: ${statusData.deleted} verwijderd, ${statusData.updated} geüpdated`)
+        }
+      }
+
+      // Stap 2: Haal eventuele nieuwe orders op (incrementeel, geen reset)
       const syncResponse = await fetch("/api/goedgepickt/sync-orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reset: true }),
       })
       if (syncResponse.ok) {
         const syncData = await syncResponse.json()
-        console.log(`🔄 Reset sync: ${syncData.stats?.deletedBefore || 0} verwijderd, ${syncData.stats?.imported || 0} geïmporteerd`)
-      } else {
-        const errData = await syncResponse.json().catch(() => ({}))
-        throw new Error(errData.error || "Fout bij synchroniseren")
+        if (syncData.stats?.imported > 0) {
+          console.log(`📦 ${syncData.stats.imported} nieuwe orders geïmporteerd`)
+        }
       }
     } catch (err: any) {
       console.error("Sync fout:", err)

@@ -3,12 +3,15 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { GoedGepicktAPI } from "@/lib/goedgepickt"
 
-const COMPLETED_STATUSES = ["completed", "cancelled", "shipped"]
+// Statussen die NIET meer geprint hoeven te worden
+// Alles behalve 'backorder' wordt verwijderd
+const KEEP_STATUSES = ["backorder"]
 
 /**
  * POST /api/printjobs/sync-statuses
  * Controleert voor alle actieve printjobs de huidige status in GoedGepickt.
- * Verwijdert printjobs waarvan de order afgerond of geannuleerd is.
+ * Verwijdert printjobs waarvan de order NIET meer in backorder is (in de wacht, afgerond, etc.).
+ * Verwijdert ook producten die al gepickt zijn of op voorraad zijn.
  * Toegankelijk voor alle ingelogde gebruikers (niet alleen admin).
  */
 export async function POST(request: NextRequest) {
@@ -32,15 +35,11 @@ export async function POST(request: NextRequest) {
 
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
-    // Haal alle unieke orderUuids op van niet-afgeronde printjobs
-    // Inclusief sku en productUuid per job (nodig voor stock check)
+    // Haal alle actieve printjobs op die we moeten controleren
     const activeOrders = await prisma.printJob.findMany({
       where: {
         orderUuid: { not: null },
-        OR: [
-          { orderStatus: null },
-          { orderStatus: { notIn: COMPLETED_STATUSES } },
-        ],
+        printStatus: { in: ["pending", "in_progress"] },
       },
       select: { id: true, orderUuid: true, sku: true, productUuid: true, quantity: true },
     })
@@ -82,17 +81,18 @@ export async function POST(request: NextRequest) {
 
         if (!newStatus) continue
 
-        if (COMPLETED_STATUSES.includes(newStatus)) {
-          // Order is afgerond → verwijder alle bijbehorende printjobs
+        if (!KEEP_STATUSES.includes(newStatus)) {
+          // Order is NIET meer backorder (bijv. in de wacht, afgerond, verzonden, geannuleerd)
+          // → verwijder alle bijbehorende printjobs
           const result = await prisma.printJob.deleteMany({
             where: { orderUuid },
           })
           deletedCount += result.count
           console.log(
-            `🗑️  Order ${orderUuid} is '${newStatus}' → ${result.count} printjob(s) verwijderd`
+            `🗑️  Order ${orderUuid} is '${newStatus}' (niet meer backorder) → ${result.count} printjob(s) verwijderd`
           )
         } else {
-          // Update status als die veranderd is
+          // Nog steeds backorder — update status en controleer per product
           const statusResult = await prisma.printJob.updateMany({
             where: { orderUuid, orderStatus: { not: newStatus } },
             data: { orderStatus: newStatus },
