@@ -103,6 +103,8 @@ export default function GoedgepicktPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState("")
   const [needsSync, setNeedsSync] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{ step: number; totalSteps: number; message: string; detail?: string } | null>(null)
+  const [syncError, setSyncError] = useState("")
 
   useEffect(() => {
     fetchStats()
@@ -136,26 +138,72 @@ export default function GoedgepicktPage() {
   const syncMetrics = async (days: number) => {
     try {
       setSyncing(true)
-      setSyncMessage(`Synchroniseren (${days} dagen)...`)
+      setSyncMessage("")
+      setSyncError("")
+      setSyncProgress({ step: 0, totalSteps: 5, message: `Synchronisatie starten (${days} dagen)...` })
+
       const res = await fetch("/api/admin/sync-daily-metrics", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ days }),
       })
-      const data = await res.json()
-      if (data.success) {
-        const warnings = data.warnings ? ` ⚠ ${data.warnings.join(". ")}` : ""
-        setSyncMessage(`Klaar! ${data.synced.rowsWritten} dagen gesynchroniseerd (${data.synced.ggShipments} zendingen, ${data.synced.ggOrders} orders)${warnings}`)
-        // Herlaad stats
-        await fetchStats()
-      } else {
-        setSyncMessage(`Fout: ${data.error}`)
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Onbekende fout" }))
+        throw new Error(errData.error || `HTTP ${res.status}`)
       }
-    } catch (err) {
-      setSyncMessage("Fout bij synchroniseren")
+
+      // Read SSE stream
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      if (!reader) throw new Error("Geen response stream")
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process complete SSE messages
+        const lines = buffer.split("\n\n")
+        buffer = lines.pop() || "" // keep incomplete message in buffer
+
+        for (const line of lines) {
+          const dataLine = line.replace(/^data: /, "").trim()
+          if (!dataLine) continue
+          try {
+            const event = JSON.parse(dataLine)
+            if (event.type === "progress" || event.type === "start") {
+              setSyncProgress({
+                step: event.step || 0,
+                totalSteps: event.totalSteps || 5,
+                message: event.message,
+                detail: event.detail,
+              })
+            } else if (event.type === "done") {
+              setSyncProgress({ step: 5, totalSteps: 5, message: "✅ " + event.message })
+              const r = event.result
+              const warnings = event.warnings ? `\n⚠️ ${event.warnings.join(". ")}` : ""
+              setSyncMessage(`${r.rowsWritten} dagen gesynchroniseerd (${r.ggShipments} zendingen, ${r.ggOrders} orders)${warnings}`)
+              await fetchStats()
+            } else if (event.type === "error") {
+              setSyncError(event.message)
+            }
+          } catch { /* skip malformed JSON */ }
+        }
+      }
+    } catch (err: any) {
+      setSyncError(err.message || "Fout bij synchroniseren")
+      setSyncProgress(null)
     } finally {
       setSyncing(false)
-      setTimeout(() => setSyncMessage(""), 10000)
+      // Keep progress visible for a bit, then clear
+      setTimeout(() => {
+        setSyncProgress(null)
+        setSyncMessage("")
+        setSyncError("")
+      }, 15000)
     }
   }
 
@@ -193,35 +241,108 @@ export default function GoedgepicktPage() {
     )
   }
 
+  // Sync progress panel — shared between needsSync and normal view
+  const SyncProgressPanel = () => {
+    if (!syncProgress && !syncMessage && !syncError) return null
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6 shadow-sm">
+        <div className="flex items-center gap-3 mb-4">
+          {syncing ? (
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600" />
+          ) : syncError ? (
+            <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-white text-xs font-bold">!</div>
+          ) : (
+            <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs">✓</div>
+          )}
+          <h3 className="font-semibold text-gray-800">
+            {syncing ? "Bezig met synchroniseren..." : syncError ? "Synchronisatie mislukt" : "Synchronisatie voltooid"}
+          </h3>
+        </div>
+
+        {/* Progress bar */}
+        {syncProgress && (
+          <div className="mb-4">
+            <div className="flex justify-between text-sm text-gray-600 mb-1">
+              <span>{syncProgress.message}</span>
+              <span>Stap {syncProgress.step}/{syncProgress.totalSteps}</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${(syncProgress.step / syncProgress.totalSteps) * 100}%` }}
+              />
+            </div>
+            {syncProgress.detail && (
+              <p className="text-xs text-gray-500 mt-1">{syncProgress.detail}</p>
+            )}
+          </div>
+        )}
+
+        {/* Steps overview */}
+        {syncing && syncProgress && (
+          <div className="grid grid-cols-5 gap-2 mt-3">
+            {["API Cooldown", "GG Zendingen", "GG Orders", "Shiftbase", "Opslaan"].map((label, i) => {
+              const stepNum = i + 1
+              const isDone = syncProgress.step > stepNum
+              const isActive = syncProgress.step === stepNum
+              return (
+                <div key={i} className={`text-center py-2 px-1 rounded text-xs font-medium ${
+                  isDone ? "bg-green-100 text-green-700" :
+                  isActive ? "bg-blue-100 text-blue-700 animate-pulse" :
+                  "bg-gray-100 text-gray-400"
+                }`}>
+                  {isDone ? "✅" : isActive ? "⏳" : "○"} {label}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {syncError && (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            {syncError}
+          </div>
+        )}
+        {syncMessage && !syncError && (
+          <p className="mt-3 text-sm text-green-700 font-medium">{syncMessage}</p>
+        )}
+      </div>
+    )
+  }
+
   if (!stats) {
     if (needsSync) {
       return (
         <div className="p-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">GoedGepickt &amp; Shiftbase</h1>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
-            <svg className="w-12 h-12 text-yellow-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">Nog geen data gesynchroniseerd</h2>
-            <p className="text-gray-600 mb-6">Klik op onderstaande knop om de data van GoedGepickt en Shiftbase op te halen en op te slaan.</p>
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={() => syncMetrics(14)}
-                disabled={syncing}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
-              >
-                {syncing ? "Bezig met synchroniseren..." : "Synchroniseer laatste 14 dagen"}
-              </button>
-              <button
-                onClick={() => syncMetrics(90)}
-                disabled={syncing}
-                className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium disabled:opacity-50"
-              >
-                {syncing ? "Bezig..." : "Volledige sync (90 dagen)"}
-              </button>
+          
+          <SyncProgressPanel />
+
+          {!syncing && !syncMessage && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
+              <svg className="w-12 h-12 text-yellow-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <h2 className="text-xl font-semibold text-gray-800 mb-2">Nog geen data gesynchroniseerd</h2>
+              <p className="text-gray-600 mb-6">Klik op onderstaande knop om de data van GoedGepickt en Shiftbase op te halen en op te slaan.</p>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={() => syncMetrics(14)}
+                  disabled={syncing}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                >
+                  Synchroniseer laatste 14 dagen
+                </button>
+                <button
+                  onClick={() => syncMetrics(90)}
+                  disabled={syncing}
+                  className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium disabled:opacity-50"
+                >
+                  Volledige sync (90 dagen)
+                </button>
+              </div>
             </div>
-            {syncMessage && <p className="mt-4 text-sm text-blue-600 font-medium">{syncMessage}</p>}
-          </div>
+          )}
         </div>
       )
     }
@@ -300,6 +421,9 @@ export default function GoedgepicktPage() {
           </button>
         </div>
       </div>
+
+      {/* Sync progress panel */}
+      <SyncProgressPanel />
 
       {/* Periode selector */}
       <div className="mb-6 flex items-center gap-2">

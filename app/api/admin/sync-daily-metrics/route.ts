@@ -50,7 +50,12 @@ async function fetchWithRetry(url: string, headers: Record<string, string>, retr
 }
 
 /** Fetch all pages with rate limit handling + inter-page delay */
-async function fetchAllPages(url: string, headers: Record<string, string>, maxPages = 200): Promise<{ items: any[]; success: boolean }> {
+async function fetchAllPages(
+  url: string,
+  headers: Record<string, string>,
+  maxPages = 200,
+  onPage?: (page: number, totalPages: number) => void
+): Promise<{ items: any[]; success: boolean }> {
   const allItems: any[] = []
   let page = 1
   let lastPage = 1
@@ -75,6 +80,9 @@ async function fetchAllPages(url: string, headers: Record<string, string>, maxPa
     }
     if (items.length === 0) break
 
+    // Report progress
+    if (onPage) onPage(page, lastPage)
+
     // Vertraging tussen pagina's om rate limits te vermijden
     if (page < lastPage) await sleep(500)
     page++
@@ -92,6 +100,7 @@ interface ShiftbaseEntry {
 // POST /api/admin/sync-daily-metrics
 // Synct dagelijkse metrics uit GoedGepickt + Shiftbase naar database
 // Body: { days?: number } (default: 14)
+// Streamt voortgang via Server-Sent Events (SSE)
 // ===================================================================
 export async function POST(request: NextRequest) {
   try {
@@ -110,261 +119,228 @@ export async function POST(request: NextRequest) {
     const startStr = toDateStr(startDate)
     const endStr = toDateStr(today)
 
-    console.log(`[SYNC] Start sync: ${startStr} → ${endStr} (${days} dagen)`)
-
     // Haal API keys op
     const [ggKeySetting, sbKeySetting] = await Promise.all([
       prisma.setting.findUnique({ where: { key: "goedgepickt_api_key" } }),
       prisma.setting.findUnique({ where: { key: "shiftbase_api_key" } }),
     ])
 
-    // Per-dag accumulators
-    const dayData: Record<string, {
-      shipments: number
-      completedOrders: number
-      processingDays: number[]
-      inpakHours: number
-      inpakEmployees: { name: string; hours: number }[]
-      printHours: number
-      allTeams: { name: string; hours: number }[]
-    }> = {}
-
-    // Initialiseer alle dagen
-    for (let i = 0; i <= days; i++) {
-      const d = new Date(startDate)
-      d.setDate(d.getDate() + i)
-      const key = toDateStr(d)
-      dayData[key] = {
-        shipments: 0,
-        completedOrders: 0,
-        processingDays: [],
-        inpakHours: 0,
-        inpakEmployees: [],
-        printHours: 0,
-        allTeams: [],
-      }
-    }
-
-    let ggShipmentsFetched = 0
-    let ggOrdersFetched = 0
-    let shipmentsFetchSuccess = false
-    let ordersFetchSuccess = false
-
-    // ===================================================================
-    // 1. GoedGepickt — Zendingen
-    // ===================================================================
-    if (ggKeySetting?.value) {
-      const headers = ggHeaders(ggKeySetting.value)
-
-      // Eerst wachten om eventuele rate limit te laten herstellen
-      console.log("[SYNC] Wacht 3s voor rate limit cooldown...")
-      await sleep(3000)
-
-      console.log("[SYNC] Fetching GG shipments...")
-      const shipmentsResult = await fetchAllPages(
-        `${GG_BASE}/shipments?createdAfter=${startStr}`,
-        headers
-      )
-      ggShipmentsFetched = shipmentsResult.items.length
-      shipmentsFetchSuccess = shipmentsResult.success
-      console.log(`[SYNC] GG shipments fetched: ${shipmentsResult.items.length} (success: ${shipmentsResult.success})`)
-
-      // Debug: log first few dates
-      if (shipmentsResult.items.length > 0) {
-        console.log(`[SYNC] First shipment createDate: ${shipmentsResult.items[0].createDate}`)
-      }
-
-      // Groepeer per createDate
-      for (const s of shipmentsResult.items) {
-        const cd = s.createDate ? new Date(s.createDate) : null
-        if (cd && !isNaN(cd.getTime())) {
-          const dayKey = toDateStr(cd)
-          if (dayData[dayKey]) {
-            dayData[dayKey].shipments++
-          }
+    // Use SSE stream for progress
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (data: Record<string, any>) => {
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+          } catch { /* stream closed */ }
         }
-      }
 
-      // Pauze tussen secties om rate limit te respecteren
-      console.log("[SYNC] Wacht 5s tussen shipments en orders...")
-      await sleep(5000)
+        try {
+          send({ type: "start", message: `Synchronisatie gestart: ${days} dagen (${startStr} → ${endStr})`, step: 0, totalSteps: 5 })
 
-      // ===================================================================
-      // 2. GoedGepickt — Completed Orders (voor afhandeltijd)
-      // ===================================================================
-      console.log("[SYNC] Fetching GG completed orders...")
-      const ordersResult = await fetchAllPages(
-        `${GG_BASE}/orders?orderstatus=completed&createdAfter=${startStr}`,
-        headers
-      )
-      ggOrdersFetched = ordersResult.items.length
-      ordersFetchSuccess = ordersResult.success
-      console.log(`[SYNC] GG completed orders fetched: ${ordersResult.items.length} (success: ${ordersResult.success})`)
+          // Per-dag accumulators
+          const dayData: Record<string, {
+            shipments: number; completedOrders: number; processingDays: number[];
+            inpakHours: number; inpakEmployees: { name: string; hours: number }[];
+            printHours: number; allTeams: { name: string; hours: number }[];
+          }> = {}
 
-      // Groepeer per finishDate
-      for (const order of ordersResult.items) {
-        const finishDate = order.finishDate ? new Date(order.finishDate) : null
-        const createDate = order.createDate ? new Date(order.createDate) : null
-
-        if (finishDate && !isNaN(finishDate.getTime())) {
-          const dayKey = toDateStr(finishDate)
-          if (dayData[dayKey]) {
-            dayData[dayKey].completedOrders++
-
-            // Afhandeltijd in dagen
-            if (createDate && !isNaN(createDate.getTime())) {
-              const diffDays = (finishDate.getTime() - createDate.getTime()) / (1000 * 60 * 60 * 24)
-              if (diffDays >= 0 && diffDays < 365) {
-                dayData[dayKey].processingDays.push(
-                  Math.round(diffDays * 10) / 10
-                )
-              }
+          for (let i = 0; i <= days; i++) {
+            const d = new Date(startDate)
+            d.setDate(d.getDate() + i)
+            dayData[toDateStr(d)] = {
+              shipments: 0, completedOrders: 0, processingDays: [],
+              inpakHours: 0, inpakEmployees: [], printHours: 0, allTeams: [],
             }
           }
-        }
-      }
-    }
 
-    // ===================================================================
-    // 3. Shiftbase — Timesheets voor alle teams
-    // ===================================================================
-    if (sbKeySetting?.value) {
-      console.log("[SYNC] Fetching Shiftbase timesheets...")
-      const res = await fetch(
-        `${SB_BASE}/timesheets?min_date=${startStr}&max_date=${endStr}`,
-        { headers: sbHeaders(sbKeySetting.value), cache: "no-store" }
-      )
+          let ggShipmentsFetched = 0
+          let ggOrdersFetched = 0
+          let shipmentsFetchSuccess = false
+          let ordersFetchSuccess = false
 
-      if (res.status === 200) {
-        const data = await res.json()
-        const entries = (data.data || []) as ShiftbaseEntry[]
-        console.log(`[SYNC] Shiftbase entries: ${entries.length}`)
+          // =========================================================
+          // STAP 1: GoedGepickt Zendingen
+          // =========================================================
+          if (ggKeySetting?.value) {
+            const headers = ggHeaders(ggKeySetting.value)
 
-        // Per-dag per-team accumulators
-        const dailyTeamHours: Record<string, Record<string, number>> = {}
-        const dailyInpakEmps: Record<string, Record<string, number>> = {}
+            send({ type: "progress", message: "Even wachten voor rate limit cooldown...", step: 1, totalSteps: 5, detail: "3 seconden pauze" })
+            await sleep(3000)
 
-        for (const entry of entries) {
-          const date = entry.Timesheet.date
-          const hours = parseFloat(entry.Timesheet.total) || 0
-          const teamId = String(entry.Team?.id)
-          const teamName = entry.Team?.name?.trim() || "Onbekend"
-          const empName = entry.User?.name || "Onbekend"
+            send({ type: "progress", message: "GoedGepickt zendingen ophalen...", step: 1, totalSteps: 5, detail: "Pagina's laden" })
+            const shipmentsResult = await fetchAllPages(
+              `${GG_BASE}/shipments?createdAfter=${startStr}`, headers,
+              200, (page, total) => send({ type: "progress", message: `GoedGepickt zendingen ophalen...`, step: 1, totalSteps: 5, detail: `Pagina ${page}${total > 1 ? ` van ~${total}` : ""}` })
+            )
+            ggShipmentsFetched = shipmentsResult.items.length
+            shipmentsFetchSuccess = shipmentsResult.success
+            send({ type: "progress", message: `✅ ${shipmentsResult.items.length} zendingen opgehaald`, step: 1, totalSteps: 5, detail: shipmentsFetchSuccess ? "Succes" : "⚠️ Niet volledig (rate limit)" })
 
-          if (!dayData[date]) continue
+            for (const s of shipmentsResult.items) {
+              const cd = s.createDate ? new Date(s.createDate) : null
+              if (cd && !isNaN(cd.getTime())) {
+                const dayKey = toDateStr(cd)
+                if (dayData[dayKey]) dayData[dayKey].shipments++
+              }
+            }
 
-          // Track per team per dag
-          if (!dailyTeamHours[date]) dailyTeamHours[date] = {}
-          dailyTeamHours[date][teamName] = (dailyTeamHours[date][teamName] || 0) + hours
+            // =========================================================
+            // STAP 2: GoedGepickt Orders
+            // =========================================================
+            send({ type: "progress", message: "Wachten tussen API calls...", step: 2, totalSteps: 5, detail: "5 seconden pauze (rate limit)" })
+            await sleep(5000)
 
-          // Inpak team
-          if (teamId === String(INPAK_TEAM_ID)) {
-            dayData[date].inpakHours += hours
-            if (!dailyInpakEmps[date]) dailyInpakEmps[date] = {}
-            dailyInpakEmps[date][empName] = (dailyInpakEmps[date][empName] || 0) + hours
+            send({ type: "progress", message: "GoedGepickt afgeronde orders ophalen...", step: 2, totalSteps: 5, detail: "Pagina's laden" })
+            const ordersResult = await fetchAllPages(
+              `${GG_BASE}/orders?orderstatus=completed&createdAfter=${startStr}`, headers,
+              200, (page, total) => send({ type: "progress", message: `GoedGepickt orders ophalen...`, step: 2, totalSteps: 5, detail: `Pagina ${page}${total > 1 ? ` van ~${total}` : ""}` })
+            )
+            ggOrdersFetched = ordersResult.items.length
+            ordersFetchSuccess = ordersResult.success
+            send({ type: "progress", message: `✅ ${ordersResult.items.length} orders opgehaald`, step: 2, totalSteps: 5, detail: ordersFetchSuccess ? "Succes" : "⚠️ Niet volledig (rate limit)" })
+
+            for (const order of ordersResult.items) {
+              const finishDate = order.finishDate ? new Date(order.finishDate) : null
+              const createDate = order.createDate ? new Date(order.createDate) : null
+              if (finishDate && !isNaN(finishDate.getTime())) {
+                const dayKey = toDateStr(finishDate)
+                if (dayData[dayKey]) {
+                  dayData[dayKey].completedOrders++
+                  if (createDate && !isNaN(createDate.getTime())) {
+                    const diffDays = (finishDate.getTime() - createDate.getTime()) / (1000 * 60 * 60 * 24)
+                    if (diffDays >= 0 && diffDays < 365) {
+                      dayData[dayKey].processingDays.push(Math.round(diffDays * 10) / 10)
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            send({ type: "progress", message: "⏭️ GoedGepickt overgeslagen (geen API key)", step: 2, totalSteps: 5 })
           }
 
-          // Print team
-          if (teamId === String(PRINT_TEAM_ID)) {
-            dayData[date].printHours += hours
+          // =========================================================
+          // STAP 3: Shiftbase
+          // =========================================================
+          if (sbKeySetting?.value) {
+            send({ type: "progress", message: "Shiftbase uren ophalen...", step: 3, totalSteps: 5, detail: "Timesheets laden" })
+            const res = await fetch(
+              `${SB_BASE}/timesheets?min_date=${startStr}&max_date=${endStr}`,
+              { headers: sbHeaders(sbKeySetting.value), cache: "no-store" }
+            )
+
+            if (res.status === 200) {
+              const data = await res.json()
+              const entries = (data.data || []) as ShiftbaseEntry[]
+              send({ type: "progress", message: `✅ ${entries.length} Shiftbase entries opgehaald`, step: 3, totalSteps: 5 })
+
+              const dailyTeamHours: Record<string, Record<string, number>> = {}
+              const dailyInpakEmps: Record<string, Record<string, number>> = {}
+
+              for (const entry of entries) {
+                const date = entry.Timesheet.date
+                const hours = parseFloat(entry.Timesheet.total) || 0
+                const teamId = String(entry.Team?.id)
+                const teamName = entry.Team?.name?.trim() || "Onbekend"
+                const empName = entry.User?.name || "Onbekend"
+                if (!dayData[date]) continue
+                if (!dailyTeamHours[date]) dailyTeamHours[date] = {}
+                dailyTeamHours[date][teamName] = (dailyTeamHours[date][teamName] || 0) + hours
+                if (teamId === String(INPAK_TEAM_ID)) {
+                  dayData[date].inpakHours += hours
+                  if (!dailyInpakEmps[date]) dailyInpakEmps[date] = {}
+                  dailyInpakEmps[date][empName] = (dailyInpakEmps[date][empName] || 0) + hours
+                }
+                if (teamId === String(PRINT_TEAM_ID)) {
+                  dayData[date].printHours += hours
+                }
+              }
+              for (const [date, teams] of Object.entries(dailyTeamHours)) {
+                if (dayData[date]) {
+                  dayData[date].allTeams = Object.entries(teams).map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+                }
+              }
+              for (const [date, emps] of Object.entries(dailyInpakEmps)) {
+                if (dayData[date]) {
+                  dayData[date].inpakEmployees = Object.entries(emps).filter(([, hours]) => hours > 0).map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+                }
+              }
+            } else {
+              send({ type: "progress", message: `⚠️ Shiftbase fout: status ${res.status}`, step: 3, totalSteps: 5, detail: "Data overgeslagen" })
+            }
+          } else {
+            send({ type: "progress", message: "⏭️ Shiftbase overgeslagen (geen API key)", step: 3, totalSteps: 5 })
           }
-        }
 
-        // Convert accumulator maps naar arrays
-        for (const [date, teams] of Object.entries(dailyTeamHours)) {
-          if (dayData[date]) {
-            dayData[date].allTeams = Object.entries(teams).map(([name, hours]) => ({
-              name,
-              hours: Math.round(hours * 10) / 10,
-            }))
+          // =========================================================
+          // STAP 4: Opslaan in database
+          // =========================================================
+          send({ type: "progress", message: "Opslaan in database...", step: 4, totalSteps: 5, detail: `${Object.keys(dayData).length} dagen wegschrijven` })
+          let upsertCount = 0
+
+          for (const [date, d] of Object.entries(dayData)) {
+            const updateData: Record<string, any> = { syncedAt: new Date() }
+            const createData: Record<string, any> = { date }
+
+            if (shipmentsFetchSuccess) {
+              updateData.shipments = d.shipments
+              createData.shipments = d.shipments
+            }
+            if (ordersFetchSuccess) {
+              updateData.completedOrders = d.completedOrders
+              updateData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
+              createData.completedOrders = d.completedOrders
+              createData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
+            }
+            if (sbKeySetting?.value) {
+              updateData.inpakHours = Math.round(d.inpakHours * 10) / 10
+              updateData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
+              updateData.printHours = Math.round(d.printHours * 10) / 10
+              updateData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
+              createData.inpakHours = Math.round(d.inpakHours * 10) / 10
+              createData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
+              createData.printHours = Math.round(d.printHours * 10) / 10
+              createData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
+            }
+
+            await prisma.dailyMetric.upsert({ where: { date }, create: createData as any, update: updateData })
+            upsertCount++
           }
+
+          // =========================================================
+          // STAP 5: Klaar
+          // =========================================================
+          const warnings: string[] = []
+          if (!shipmentsFetchSuccess) warnings.push("Zendingen niet volledig opgehaald (rate limit)")
+          if (!ordersFetchSuccess) warnings.push("Orders niet volledig opgehaald (rate limit)")
+
+          send({
+            type: "done",
+            message: "Synchronisatie voltooid!",
+            step: 5,
+            totalSteps: 5,
+            result: {
+              days, startDate: startStr, endDate: endStr,
+              rowsWritten: upsertCount, ggShipments: ggShipmentsFetched, ggOrders: ggOrdersFetched,
+              hasShiftbase: !!sbKeySetting?.value, shipmentsFetchSuccess, ordersFetchSuccess,
+            },
+            warnings: warnings.length > 0 ? warnings : undefined,
+          })
+        } catch (error) {
+          send({ type: "error", message: `Fout: ${error instanceof Error ? error.message : String(error)}` })
+        } finally {
+          controller.close()
         }
-        for (const [date, emps] of Object.entries(dailyInpakEmps)) {
-          if (dayData[date]) {
-            dayData[date].inpakEmployees = Object.entries(emps)
-              .filter(([, hours]) => hours > 0)
-              .map(([name, hours]) => ({
-                name,
-                hours: Math.round(hours * 10) / 10,
-              }))
-          }
-        }
-      } else {
-        console.log(`[SYNC] Shiftbase fetch failed: ${res.status}`)
       }
-    }
+    })
 
-    // ===================================================================
-    // 4. Opslaan in database — upsert per dag
-    //    Alleen velden updaten die succesvol gefetcht zijn
-    // ===================================================================
-    console.log("[SYNC] Writing to database...")
-    console.log(`[SYNC] Shipments success: ${shipmentsFetchSuccess}, Orders success: ${ordersFetchSuccess}`)
-    let upsertCount = 0
-
-    for (const [date, d] of Object.entries(dayData)) {
-      // Build update object - alleen velden die succesvol zijn opgehaald
-      const updateData: Record<string, any> = {
-        syncedAt: new Date(),
-      }
-      const createData: Record<string, any> = {
-        date,
-      }
-
-      // GG shipments - alleen updaten als fetch succesvol was
-      if (shipmentsFetchSuccess) {
-        updateData.shipments = d.shipments
-        createData.shipments = d.shipments
-      }
-
-      // GG completed orders - alleen updaten als fetch succesvol was
-      if (ordersFetchSuccess) {
-        updateData.completedOrders = d.completedOrders
-        updateData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
-        createData.completedOrders = d.completedOrders
-        createData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
-      }
-
-      // Shiftbase - altijd updaten (1 API call, geen rate limit issues)
-      if (sbKeySetting?.value) {
-        updateData.inpakHours = Math.round(d.inpakHours * 10) / 10
-        updateData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
-        updateData.printHours = Math.round(d.printHours * 10) / 10
-        updateData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
-        createData.inpakHours = Math.round(d.inpakHours * 10) / 10
-        createData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
-        createData.printHours = Math.round(d.printHours * 10) / 10
-        createData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
-      }
-
-      await prisma.dailyMetric.upsert({
-        where: { date },
-        create: createData as any,
-        update: updateData,
-      })
-      upsertCount++
-    }
-
-    console.log(`[SYNC] Done! ${upsertCount} dagen opgeslagen`)
-
-    const warnings: string[] = []
-    if (!shipmentsFetchSuccess) warnings.push("Zendingen konden niet volledig worden opgehaald (rate limit)")
-    if (!ordersFetchSuccess) warnings.push("Orders konden niet volledig worden opgehaald (rate limit)")
-
-    return NextResponse.json({
-      success: true,
-      synced: {
-        days,
-        startDate: startStr,
-        endDate: endStr,
-        rowsWritten: upsertCount,
-        ggShipments: ggShipmentsFetched,
-        ggOrders: ggOrdersFetched,
-        hasShiftbase: !!sbKeySetting?.value,
-        shipmentsFetchSuccess,
-        ordersFetchSuccess,
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
       },
-      warnings: warnings.length > 0 ? warnings : undefined,
     })
   } catch (error) {
     console.error("[SYNC] Error:", error)
