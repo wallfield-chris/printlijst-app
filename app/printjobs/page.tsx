@@ -42,6 +42,7 @@ export default function PrintJobsPage() {
   const [listViews, setListViews] = useState<ListView[]>([])
   const [activeTab, setActiveTab] = useState<string>("all")
   const [loading, setLoading] = useState(true)
+  const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [error, setError] = useState("")
   const [selectedJob, setSelectedJob] = useState<PrintJob | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -215,6 +216,7 @@ export default function PrintJobsPage() {
 
       const data = await response.json()
       setPrintJobs(data)
+      setInitialLoadDone(true)
     } catch (err) {
       if (!silent) setError("Kan printjobs niet laden")
       console.error(err)
@@ -597,7 +599,7 @@ export default function PrintJobsPage() {
     }
   }
 
-  if (status === "loading" || loading) {
+  if ((status === "loading" || loading) && !initialLoadDone) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

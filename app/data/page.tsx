@@ -41,6 +41,7 @@ export default function DataPage() {
   const router = useRouter()
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [activePeriod, setActivePeriod] = useState<Period>("week")
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function DataPage() {
       if (res.ok) {
         const data = await res.json()
         setStats(data)
+        setInitialLoadDone(true)
       }
     } catch (err) {
       console.error("Error fetching stats:", err)
@@ -98,7 +100,7 @@ export default function DataPage() {
     return `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`
   }
 
-  if (status === "loading" || loading) {
+  if ((status === "loading" || loading) && !initialLoadDone) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <p className="text-gray-500 text-lg">Laden...</p>
