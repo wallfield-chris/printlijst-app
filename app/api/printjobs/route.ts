@@ -62,7 +62,21 @@ export async function GET(request: NextRequest) {
     const to = searchParams.get("to")
     const missingFile = searchParams.get("missingFile")
 
-    const where: any = {}
+    const where: any = {
+      // Sluit altijd afgeronde/geannuleerde/verzonden orders uit
+      // Sluit ook 'pushed' jobs uit (die zijn al naar voorraad gepusht)
+      AND: [
+        {
+          OR: [
+            { orderStatus: null },
+            { orderStatus: { notIn: ['completed', 'cancelled', 'shipped'] } },
+          ],
+        },
+        {
+          printStatus: { not: 'pushed' },
+        },
+      ],
+    }
     
     if (statusParam.length > 0) {
       where.printStatus = { in: statusParam }

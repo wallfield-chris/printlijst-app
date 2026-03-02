@@ -57,7 +57,7 @@ export default function MissingFilesPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ missingFile: false }),
+        body: JSON.stringify({ missingFile: false, printStatus: "pending" }),
       })
 
       if (!response.ok) {

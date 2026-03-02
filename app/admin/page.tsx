@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import ChangeBadge from "@/app/components/ChangeBadge"
 
 interface User {
   id: string
@@ -8,41 +9,78 @@ interface User {
   email: string
 }
 
-interface PrintJob {
+interface CompletedJob {
   id: string
   orderNumber: string
   productName: string
   quantity: number
-  priority: string
-  printStatus: string
-  receivedAt: string
+  tags?: string
   startedAt?: string
   completedAt?: string
   completedByUser?: User
-  tags?: string
+}
+
+interface EmployeeStat {
+  userId: string
+  name: string
+  email: string
+  jobCount: number
+  totalQuantity: number
+  totalM2: number
+  totalPrintMinutes: number
+  avgProcessingMs: number
+}
+
+interface PeriodStats {
+  jobCount: number
+  totalQuantity: number
+  totalM2: number
+  totalPrintMinutes: number
+  avgProcessingMs: number
+  m2PerHour: number
+  employees: EmployeeStat[]
+  shiftbaseHours: number | null
+}
+
+interface DailyBreakdown {
+  date: string
+  jobCount: number
+  totalM2: number
+  totalMinutes: number
+  shiftbaseHours: number
+}
+
+interface PrevPeriodStats {
+  jobCount: number
+  totalQuantity: number
+  totalM2: number
+  totalPrintMinutes: number
+  avgProcessingMs: number
+  m2PerHour: number
+  shiftbaseHours: number | null
 }
 
 interface Stats {
   statusCounts: { printStatus: string; _count: number }[]
-  completedJobs: PrintJob[]
-  avgProcessingTimeMs: number
-  employeeStats: { user: User; count: number }[]
+  open: { m2: number; printMinutes: number; jobCount: number }
+  today: PeriodStats
+  week: PeriodStats
+  month: PeriodStats
+  prevToday: PrevPeriodStats
+  prevWeek: PrevPeriodStats
+  prevMonth: PrevPeriodStats
+  dailyBreakdown: DailyBreakdown[]
+  completedToday: CompletedJob[]
 }
 
-interface ProductionSpec {
-  id: string
-  tag: string
-  m2: number | null
-  time: number | null
-}
+type Period = "today" | "week" | "month"
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
-  const [allJobs, setAllJobs] = useState<PrintJob[]>([])
-  const [productionSpecs, setProductionSpecs] = useState<ProductionSpec[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [activePeriod, setActivePeriod] = useState<Period>("today")
 
   useEffect(() => {
     fetchData()
@@ -50,35 +88,16 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!autoRefresh) return
-
-    const interval = setInterval(() => {
-      fetchData()
-    }, 5000) // Elke 5 seconden verversen
-
+    const interval = setInterval(fetchData, 5000)
     return () => clearInterval(interval)
   }, [autoRefresh])
 
   const fetchData = async () => {
     try {
-      setLoading(true)
-      
-      const [statsResponse, jobsResponse, specsResponse] = await Promise.all([
-        fetch("/api/stats"),
-        fetch("/api/printjobs"),
-        fetch("/api/production-specs"),
-      ])
-
-      if (!statsResponse.ok || !jobsResponse.ok || !specsResponse.ok) {
-        throw new Error("Fout bij ophalen van data")
-      }
-
-      const statsData = await statsResponse.json()
-      const jobsData = await jobsResponse.json()
-      const specsData = await specsResponse.json()
-
-      setStats(statsData)
-      setAllJobs(jobsData)
-      setProductionSpecs(specsData)
+      const res = await fetch("/api/stats")
+      if (!res.ok) throw new Error("Fout bij ophalen van data")
+      const data = await res.json()
+      setStats(data)
       setError("")
     } catch (err) {
       setError("Kan data niet laden")
@@ -89,45 +108,32 @@ export default function DashboardPage() {
   }
 
   const formatTime = (ms: number) => {
+    if (ms === 0) return "—"
     const seconds = Math.floor(ms / 1000)
     const minutes = Math.floor(seconds / 60)
     const hours = Math.floor(minutes / 60)
+    if (hours > 0) return `${hours}u ${minutes % 60}m`
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+    return `${seconds}s`
+  }
 
-    if (hours > 0) {
-      return `${hours}u ${minutes % 60}m`
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds % 60}s`
-    } else {
-      return `${seconds}s`
-    }
+  const formatMinutes = (minutes: number): string => {
+    if (minutes === 0) return "—"
+    if (minutes < 60) return `${minutes} min`
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    if (mins === 0) return `${hours} uur`
+    return `${hours}u ${mins}m`
+  }
+
+  const formatDate = (dateStr: string): string => {
+    const d = new Date(dateStr + "T00:00:00")
+    const days = ["zo", "ma", "di", "wo", "do", "vr", "za"]
+    return `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`
   }
 
   const getStatusCount = (status: string) => {
-    const statusItem = stats?.statusCounts.find(s => s.printStatus === status)
-    return statusItem?._count || 0
-  }
-
-  const calculateTotalM2 = () => {
-    const pendingAndInProgress = allJobs.filter(
-      j => j.printStatus === "pending" || j.printStatus === "in_progress"
-    )
-    
-    let totalM2 = 0
-    
-    for (const job of pendingAndInProgress) {
-      if (!job.tags) continue
-      
-      const jobTags = job.tags.split(',').map(t => t.trim())
-      
-      for (const tag of jobTags) {
-        const spec = productionSpecs.find(s => s.tag.toLowerCase() === tag.toLowerCase())
-        if (spec && spec.m2) {
-          totalM2 += spec.m2 * job.quantity
-        }
-      }
-    }
-    
-    return totalM2.toFixed(2)
+    return stats?.statusCounts.find(s => s.printStatus === status)?._count || 0
   }
 
   if (loading && !stats) {
@@ -140,21 +146,26 @@ export default function DashboardPage() {
     )
   }
 
-  const pendingJobs = allJobs.filter(j => j.printStatus === "pending")
-  const inProgressJobs = allJobs.filter(j => j.printStatus === "in_progress")
-  const completedToday = allJobs.filter(j => {
-    if (!j.completedAt) return false
-    const today = new Date()
-    const completedDate = new Date(j.completedAt)
-    return completedDate.toDateString() === today.toDateString()
-  })
+  const periodLabels: Record<Period, string> = {
+    today: "Vandaag",
+    week: "Afgelopen 7 dagen",
+    month: "Afgelopen 30 dagen",
+  }
+
+  const periodData = stats ? stats[activePeriod] : null
+  const prevPeriodMap: Record<Period, "prevToday" | "prevWeek" | "prevMonth"> = {
+    today: "prevToday",
+    week: "prevWeek",
+    month: "prevMonth",
+  }
+  const prevData = stats ? stats[prevPeriodMap[activePeriod]] : null
 
   return (
     <div className="p-8">
       <div className="mb-8 flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600 mt-2">Real-time monitoring & statistieken</p>
+          <p className="text-gray-600 mt-2">Real-time productie monitoring</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -168,12 +179,10 @@ export default function DashboardPage() {
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-          {error}
-        </div>
+        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">{error}</div>
       )}
 
-      {/* Statistiek Cards */}
+      {/* Row 1 - Live status */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
@@ -206,41 +215,9 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Voltooid Vandaag</p>
-              <p className="text-3xl font-bold text-green-600">{completedToday.length}</p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-full">
-              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Gem. Verwerkingstijd</p>
-              <p className="text-3xl font-bold text-purple-600">
-                {stats ? formatTime(stats.avgProcessingTimeMs) : "-"}
-              </p>
-            </div>
-            <div className="p-3 bg-purple-100 rounded-full">
-              <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tweede rij - Productie Statistieken */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Totaal M² Open</p>
-              <p className="text-3xl font-bold text-indigo-600">{calculateTotalM2()}</p>
+              <p className="text-sm font-medium text-gray-600">M² Open</p>
+              <p className="text-3xl font-bold text-indigo-600">{stats?.open.m2 || 0}</p>
+              <p className="text-xs text-gray-400 mt-1">{stats?.open.jobCount || 0} jobs</p>
             </div>
             <div className="p-3 bg-indigo-100 rounded-full">
               <svg className="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -253,193 +230,255 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Totaal Tijd Open</p>
-              <p className="text-3xl font-bold text-gray-400">-</p>
+              <p className="text-sm font-medium text-gray-600">Geschatte Printtijd Open</p>
+              <p className="text-3xl font-bold text-orange-600">{formatMinutes(stats?.open.printMinutes || 0)}</p>
             </div>
-            <div className="p-3 bg-gray-100 rounded-full">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="p-3 bg-orange-100 rounded-full">
+              <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Periode selector */}
+      <div className="mb-6 border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          {(Object.keys(periodLabels) as Period[]).map(period => (
+            <button
+              key={period}
+              onClick={() => setActivePeriod(period)}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                activePeriod === period
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              {periodLabels[period]}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Row 2 - Productie stats voor gekozen periode */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-600">Jobs Voltooid</p>
+            {prevData && <ChangeBadge current={periodData?.jobCount || 0} previous={prevData.jobCount} />}
+          </div>
+          <p className="text-3xl font-bold text-green-600">{periodData?.jobCount || 0}</p>
+          <p className="text-xs text-gray-400 mt-1">{periodData?.totalQuantity || 0} stuks</p>
+        </div>
 
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Placeholder 1</p>
-              <p className="text-3xl font-bold text-gray-400">-</p>
-            </div>
-            <div className="p-3 bg-gray-100 rounded-full">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </div>
+            <p className="text-sm font-medium text-gray-600">M² Geprint</p>
+            {prevData && <ChangeBadge current={periodData?.totalM2 || 0} previous={prevData.totalM2} />}
           </div>
+          <p className="text-3xl font-bold text-indigo-600">{periodData?.totalM2 || 0}</p>
+          <p className="text-xs text-gray-400 mt-1">vierkante meter</p>
         </div>
 
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Placeholder 2</p>
-              <p className="text-3xl font-bold text-gray-400">-</p>
-            </div>
-            <div className="p-3 bg-gray-100 rounded-full">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-              </svg>
-            </div>
+            <p className="text-sm font-medium text-gray-600">Geschatte Printtijd</p>
+            {prevData && <ChangeBadge current={periodData?.totalPrintMinutes || 0} previous={prevData.totalPrintMinutes} />}
           </div>
+          <p className="text-3xl font-bold text-purple-600">{formatMinutes(periodData?.totalPrintMinutes || 0)}</p>
+          <p className="text-xs text-gray-400 mt-1">op basis van formaten</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-600">M²/uur</p>
+            {prevData && <ChangeBadge current={periodData?.m2PerHour || 0} previous={prevData.m2PerHour} />}
+          </div>
+          <p className="text-3xl font-bold text-teal-600">{periodData?.m2PerHour || 0}</p>
+          <p className="text-xs text-gray-400 mt-1">gemiddelde doorvoer</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-600">Gem. Verwerkingstijd</p>
+            {prevData && <ChangeBadge current={periodData?.avgProcessingMs || 0} previous={prevData.avgProcessingMs} invertColor />}
+          </div>
+          <p className="text-3xl font-bold text-orange-600">{formatTime(periodData?.avgProcessingMs || 0)}</p>
+          <p className="text-xs text-gray-400 mt-1">start → klaar per job</p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-600">Werktijd (Shiftbase)</p>
+            {prevData?.shiftbaseHours != null && periodData?.shiftbaseHours != null && (
+              <ChangeBadge current={periodData.shiftbaseHours} previous={prevData.shiftbaseHours} />
+            )}
+          </div>
+          {periodData?.shiftbaseHours != null ? (
+            <>
+              <p className="text-3xl font-bold text-cyan-600">
+                {formatMinutes(Math.round(periodData.shiftbaseHours * 60))}
+              </p>
+              {(() => {
+                const printHours = (periodData?.totalPrintMinutes || 0) / 60
+                const workHours = periodData.shiftbaseHours
+                if (printHours > 0 && workHours > 0) {
+                  const ratio = Math.round((printHours / workHours) * 100)
+                  const color = ratio > 80 ? "text-green-600" : ratio > 50 ? "text-yellow-600" : "text-red-500"
+                  return <p className={`text-xs mt-1 ${color}`}>Benutting: {ratio}% van werktijd</p>
+                }
+                return <p className="text-xs text-gray-400 mt-1">Print team uren</p>
+              })()}
+            </>
+          ) : (
+            <>
+              <p className="text-3xl font-bold text-gray-300">—</p>
+              <p className="text-xs text-gray-400 mt-1">niet beschikbaar</p>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Werknemers Prestaties */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Werknemers Prestaties</h2>
-          </div>
-          <div className="p-6">
-            {stats?.employeeStats && stats.employeeStats.length > 0 ? (
-              <div className="space-y-4">
-                {stats.employeeStats.map((emp) => (
-                  <div key={emp.user.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
-                        {emp.user.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{emp.user.name}</p>
-                        <p className="text-sm text-gray-500">{emp.user.email}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-blue-600">{emp.count}</p>
-                      <p className="text-xs text-gray-500">voltooid</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500 text-center py-8">Geen data beschikbaar</p>
-            )}
-          </div>
-        </div>
-
-        {/* Actieve Jobs */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Actieve Jobs</h2>
-          </div>
-          <div className="p-6 max-h-96 overflow-y-auto">
-            {[...pendingJobs, ...inProgressJobs].length > 0 ? (
-              <div className="space-y-3">
-                {[...pendingJobs, ...inProgressJobs].slice(0, 10).map((job) => (
-                  <div key={job.id} className="p-3 border border-gray-200 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium text-gray-900">Order #{job.orderNumber}</span>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        job.printStatus === "in_progress"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : "bg-blue-100 text-blue-800"
-                      }`}>
-                        {job.printStatus === "in_progress" ? "Bezig" : "Wachtend"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600">{job.productName}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(job.receivedAt).toLocaleTimeString("nl-NL")}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500 text-center py-8">Geen actieve jobs</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Voltooide Jobs */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Voltooid</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Order #
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Product
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Werknemer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Voltooid
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tijd
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {completedToday.slice(0, 10).map((job) => {
-                const processingTime = job.startedAt && job.completedAt
-                  ? new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()
-                  : 0
-
+      {/* Daily breakdown chart (last 7 days) */}
+      {stats && stats.dailyBreakdown.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Productie afgelopen 7 dagen</h2>
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="grid grid-cols-7 gap-px bg-gray-200">
+              {stats.dailyBreakdown.map(day => {
+                const maxM2 = Math.max(...stats.dailyBreakdown.map(d => d.totalM2), 0.1)
+                const barHeight = day.totalM2 > 0 ? Math.max((day.totalM2 / maxM2) * 100, 8) : 0
                 return (
-                  <tr key={job.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {job.orderNumber}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {job.productName}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {job.completedByUser?.name || "-"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {job.completedAt ? new Date(job.completedAt).toLocaleTimeString("nl-NL") : "-"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {processingTime > 0 ? formatTime(processingTime) : "-"}
-                    </td>
-                  </tr>
+                  <div key={day.date} className="bg-white p-3 text-center">
+                    <p className="text-xs font-medium text-gray-500">{formatDate(day.date)}</p>
+                    <div className="h-24 flex items-end justify-center gap-1 mt-2">
+                      <div
+                        className="w-5 bg-indigo-500 rounded-t transition-all"
+                        style={{ height: `${barHeight}%` }}
+                        title={`${day.totalM2} m² geprint`}
+                      />
+                      {day.shiftbaseHours > 0 && (
+                        <div
+                          className="w-5 bg-cyan-400 rounded-t transition-all"
+                          style={{ height: `${Math.max((day.shiftbaseHours / Math.max(...stats.dailyBreakdown.map(d => d.shiftbaseHours || 0.1), 0.1)) * 100, 8)}%` }}
+                          title={`${day.shiftbaseHours}u werktijd`}
+                        />
+                      )}
+                    </div>
+                    <p className="text-sm font-bold text-gray-900 mt-1">{day.totalM2} m²</p>
+                    <p className="text-xs text-gray-400">{day.jobCount} jobs</p>
+                    <p className="text-xs text-gray-400">{formatMinutes(day.totalMinutes)}</p>
+                    {day.shiftbaseHours > 0 && (
+                      <p className="text-xs text-cyan-600 font-medium">{day.shiftbaseHours}u werk</p>
+                    )}
+                  </div>
                 )
               })}
-            </tbody>
-          </table>
-          {completedToday.length === 0 && (
-            <p className="text-gray-500 text-center py-8">Nog geen voltooide jobs vandaag</p>
-          )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Werknemers & Active/Recent */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* Employee leaderboard */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Werknemers — {periodLabels[activePeriod].toLowerCase()}
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-10">#</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Naam</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Jobs</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">M²</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Printtijd</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Gem. snelheid</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {periodData?.employees.filter(e => e.jobCount > 0).map((emp, i) => {
+                  const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : ""
+                  return (
+                    <tr key={emp.userId} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm">
+                        {medal || <span className="text-gray-400">{i + 1}</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                            {emp.name.charAt(0)}
+                          </div>
+                          {emp.name}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-mono text-gray-900">{emp.jobCount}</td>
+                      <td className="px-4 py-3 text-sm text-right font-mono text-gray-900">{emp.totalM2}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-500">{formatMinutes(emp.totalPrintMinutes)}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-500">{formatTime(emp.avgProcessingMs)}</td>
+                    </tr>
+                  )
+                })}
+                {(!periodData?.employees || periodData.employees.filter(e => e.jobCount > 0).length === 0) && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                      Geen data voor deze periode
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Recent voltooid vandaag */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Recent Voltooid Vandaag</h2>
+          </div>
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Door</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Tijd</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {stats?.completedToday.map(job => {
+                  const procTime = job.startedAt && job.completedAt
+                    ? new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()
+                    : 0
+                  return (
+                    <tr key={job.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">#{job.orderNumber}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600 max-w-[200px] truncate">{job.productName}</td>
+                      <td className="px-4 py-3 text-sm text-gray-500">{job.completedByUser?.name || "—"}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-500">{procTime > 0 ? formatTime(procTime) : "—"}</td>
+                    </tr>
+                  )
+                })}
+                {(!stats?.completedToday || stats.completedToday.length === 0) && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                      Nog geen voltooide jobs vandaag
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
   )
-}
-
-interface User {
-  id: string
-  name: string
-  email: string
-}
-
-interface PrintJob {
-  id: string
-  orderNumber: string
-  productName: string
-  quantity: number
-  priority: string
-  status: string
-  receivedAt: string
-  startedAt?: string
-  completedAt?: string
-  completedByUser?: User
 }
 
 

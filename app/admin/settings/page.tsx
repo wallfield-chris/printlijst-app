@@ -19,6 +19,14 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   
+  // Shiftbase settings
+  const [sbApiKey, setSbApiKey] = useState("")
+  const [isSbApiKeyVisible, setIsSbApiKeyVisible] = useState(false)
+  const [isSbSaving, setIsSbSaving] = useState(false)
+  const [sbSaveMessage, setSbSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [isSbTesting, setIsSbTesting] = useState(false)
+  const [sbTestResult, setSbTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  
   // Webhook test
   const [testOrderUuid, setTestOrderUuid] = useState("")
   const [isTestingWebhook, setIsTestingWebhook] = useState(false)
@@ -46,6 +54,9 @@ export default function SettingsPage() {
         const settings = await response.json()
         if (settings.goedgepickt_api_key) {
           setApiKey(settings.goedgepickt_api_key)
+        }
+        if (settings.shiftbase_api_key) {
+          setSbApiKey(settings.shiftbase_api_key)
         }
         if (settings.webhook_debug_mode) {
           setDebugMode(settings.webhook_debug_mode === "true")
@@ -167,6 +178,59 @@ export default function SettingsPage() {
     const url = `${window.location.origin}/api/webhook`
     navigator.clipboard.writeText(url)
     alert("Webhook URL gekopieerd!")
+  }
+
+  const saveSbApiKey = async () => {
+    if (!sbApiKey.trim()) {
+      setSbSaveMessage({ type: "error", text: "API key mag niet leeg zijn" })
+      return
+    }
+    setIsSbSaving(true)
+    setSbSaveMessage(null)
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "shiftbase_api_key", value: sbApiKey }),
+      })
+      if (response.ok) {
+        setSbSaveMessage({ type: "success", text: "Shiftbase API key opgeslagen!" })
+        setTimeout(() => setSbSaveMessage(null), 3000)
+      } else {
+        setSbSaveMessage({ type: "error", text: "Kon API key niet opslaan" })
+      }
+    } catch {
+      setSbSaveMessage({ type: "error", text: "Netwerkfout" })
+    } finally {
+      setIsSbSaving(false)
+    }
+  }
+
+  const testSbConnection = async () => {
+    if (!sbApiKey.trim()) {
+      setSbTestResult({ success: false, message: "Voer eerst een API key in" })
+      return
+    }
+    setIsSbTesting(true)
+    setSbTestResult(null)
+    try {
+      const res = await fetch("https://api.shiftbase.com/api/departments", {
+        headers: { Authorization: `API ${sbApiKey}`, Accept: "application/json" },
+      })
+      if (res.status === 200) {
+        const data = await res.json()
+        const count = data.data?.length || 0
+        setSbTestResult({ success: true, message: `Verbinding OK! ${count} afdelingen gevonden.` })
+      } else if (res.status === 401) {
+        setSbTestResult({ success: false, message: "Authenticatie mislukt — controleer je API key" })
+      } else {
+        setSbTestResult({ success: false, message: `Fout: HTTP ${res.status}` })
+      }
+    } catch {
+      setSbTestResult({ success: false, message: "Netwerkfout — kan Shiftbase niet bereiken" })
+    } finally {
+      setIsSbTesting(false)
+    }
   }
 
   const testWebhook = async () => {
@@ -841,6 +905,107 @@ export default function SettingsPage() {
           </div>
 
           {/* Email */}
+          
+          {/* Shiftbase */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Shiftbase</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Integratie met Shiftbase voor gewerkte uren van het Inpak Team
+                  </p>
+                </div>
+                <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                  sbApiKey ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                }`}>
+                  {sbApiKey ? "Geconfigureerd" : "Niet geconfigureerd"}
+                </span>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* API Key */}
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Shiftbase API Key
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    (Te vinden in Shiftbase App Center → API)
+                  </span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type={isSbApiKeyVisible ? "text" : "password"}
+                    value={sbApiKey}
+                    onChange={(e) => setSbApiKey(e.target.value)}
+                    placeholder="ae52a87f6f21..."
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm font-mono"
+                  />
+                  <button 
+                    onClick={() => setIsSbApiKeyVisible(!isSbApiKeyVisible)}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                  >
+                    {isSbApiKeyVisible ? "Verberg" : "Toon"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Save Message */}
+              {sbSaveMessage && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  sbSaveMessage.type === "success" 
+                    ? "bg-green-50 text-green-800 border border-green-200" 
+                    : "bg-red-50 text-red-800 border border-red-200"
+                }`}>
+                  {sbSaveMessage.text}
+                </div>
+              )}
+
+              {/* Test Result */}
+              {sbTestResult && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  sbTestResult.success 
+                    ? "bg-green-50 text-green-800 border border-green-200" 
+                    : "bg-red-50 text-red-800 border border-red-200"
+                }`}>
+                  {sbTestResult.success ? "✅ " : "❌ "}
+                  {sbTestResult.message}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="pt-4 flex gap-3">
+                <button 
+                  onClick={saveSbApiKey}
+                  disabled={isSbSaving || !sbApiKey.trim()}
+                  className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                >
+                  {isSbSaving ? "Bezig..." : "API Key Opslaan"}
+                </button>
+                <button 
+                  onClick={testSbConnection}
+                  disabled={isSbTesting || !sbApiKey.trim()}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                >
+                  {isSbTesting ? "Testen..." : "Test Connectie"}
+                </button>
+              </div>
+
+              {/* Instructions */}
+              <div className="pt-4 border-t border-gray-200">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">📖 Setup Instructies:</h3>
+                <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+                  <li>Log in op Shiftbase als administrator</li>
+                  <li>Ga naar App Center → API</li>
+                  <li>Zorg dat &quot;App Center Plus&quot; actief is (€15/mnd)</li>
+                  <li>Maak een nieuwe API key aan</li>
+                  <li>Kopieer de key en plak hierboven</li>
+                  <li>Klik op &quot;API Key Opslaan&quot;</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          {/* Email Notificaties */}
           <div className="bg-white rounded-lg shadow">
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">

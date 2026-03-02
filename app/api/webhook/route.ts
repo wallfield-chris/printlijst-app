@@ -456,10 +456,29 @@ export async function POST(request: NextRequest) {
       webhookLogger.log(orderUuid, orderStatus || undefined, body)
     }
 
+    // Definitieve statussen: printjobs moeten worden verwijderd
+    const COMPLETED_STATUSES = ['completed', 'cancelled', 'shipped']
+    const isCompletedOrder = orderStatus ? COMPLETED_STATUSES.includes(orderStatus) : false
+
     // Check of we bestaande printjobs moeten updaten met nieuwe order status
     if (existingJobs.length > 0) {
       console.log(`📋 Order ${orderUuid} bestaat al met ${existingJobs.length} printjobs`)
       let updatedJobs = 0
+
+      // Als order afgerond of geannuleerd is: verwijder alle printjobs direct
+      if (isCompletedOrder) {
+        console.log(`🗑️  Order ${orderUuid} is '${orderStatus}' → alle printjobs worden verwijderd`)
+        await prisma.printJob.deleteMany({
+          where: { orderUuid },
+        })
+        return NextResponse.json({
+          success: true,
+          message: `Order is '${orderStatus}': ${existingJobs.length} printjob(s) verwijderd`,
+          deleted: existingJobs.length,
+          orderStatus,
+          event: webhookEvent,
+        }, { status: 200 })
+      }
       
       if (orderStatus) {
         // Check of de status is veranderd
@@ -535,6 +554,18 @@ export async function POST(request: NextRequest) {
       }, { status: 200 })
     }
 
+    // Blokkeer nieuwe printjobs voor afgeronde/geannuleerde orders
+    if (isCompletedOrder) {
+      console.log(`🚫 Order ${orderUuid} heeft status '${orderStatus}' → geen printjobs aangemaakt`)
+      return NextResponse.json({
+        success: true,
+        message: `Order is '${orderStatus}': geen printjobs aangemaakt`,
+        skipped: true,
+        orderStatus,
+        event: webhookEvent,
+      }, { status: 200 })
+    }
+
     const createdJobs = []
 
     // Maak een printjob voor elk product in de order
@@ -566,6 +597,14 @@ export async function POST(request: NextRequest) {
         // Haal product details op voor voorraad info en supplierSku
         let isBackorder = false
         let supplierSku: string | null = null
+        let imageUrl: string | null = null
+        let freeStock: number | null = null
+
+        // Check 1: product al gepickt? Dan niet printen
+        if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
+          console.log(`   ✅ Al gepickt, skip: ${product.sku || product.productName} (${product.pickedQuantity}/${product.productQuantity})`)
+          continue
+        }
         
         if (product.productUuid) {
           try {
@@ -580,9 +619,15 @@ export async function POST(request: NextRequest) {
                 console.log(`   📦 Backfile (supplierSku): ${supplierSku}`)
               }
               
+              // Haal product afbeelding op (skip placeholder)
+              if (productDetails.picture && !productDetails.picture.includes('image_placeholder')) {
+                imageUrl = productDetails.picture
+                console.log(`   🖼️  Afbeelding: ${imageUrl}`)
+              }
+              
               // Check voorraad
               if (productDetails.stock) {
-                const freeStock = productDetails.stock.freeStock || 0
+                freeStock = productDetails.stock.freeStock ?? 0
                 isBackorder = freeStock < 0
                 console.log(`   📊 Voorraad: ${freeStock} (backorder: ${isBackorder})`)
               }
@@ -590,6 +635,13 @@ export async function POST(request: NextRequest) {
           } catch (error) {
             console.warn(`⚠️  Kon product details niet ophalen voor ${product.productUuid}`)
           }
+        }
+
+        // Check 2: freeStock >= 0 = voorraad aanwezig of gereserveerd → niet in backorder → niet printen
+        // freeStock < 0 = écht in backorder (meer besteld dan er ooit is) → wel printen
+        if (freeStock !== null && freeStock >= 0) {
+          console.log(`   📦 Op voorraad, skip: ${product.sku || product.productName} (freeStock: ${freeStock})`)
+          continue
         }
 
         // Bepaal priority op basis van tags
@@ -654,6 +706,7 @@ export async function POST(request: NextRequest) {
             productName: product.productName || "Onbekend product",
             sku: product.sku ?? null,
             backfile: supplierSku,
+            imageUrl,
             quantity: product.productQuantity || 1,
             pickedQuantity: product.pickedQuantity || 0,
             priority,

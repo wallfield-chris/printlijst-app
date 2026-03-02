@@ -48,3 +48,4 @@ prisma/dev.db
 prisma/dev.db-journal
 
 /app/generated/prisma
+*.bak

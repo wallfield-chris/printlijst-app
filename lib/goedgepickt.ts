@@ -131,6 +131,201 @@ export class GoedGepicktAPI {
     }
   }
 
+  /**
+   * Haal alle pick-locaties op (alle pagina's)
+   */
+  async getPickLocations(): Promise<{ uuid: string; name: string; [key: string]: any }[]> {
+    const allLocations: { uuid: string; name: string; [key: string]: any }[] = []
+    let page = 1
+    const perPage = 100
+
+    while (true) {
+      const url = `${this.baseUrl}/picklocations?perPage=${perPage}&page=${page}`
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: this.getHeaders(),
+          cache: "no-store",
+        })
+        if (response.status !== 200) break
+
+        const data = await response.json()
+        let items: any[] = []
+
+        if (Array.isArray(data)) {
+          items = data
+        } else if (data.items && Array.isArray(data.items)) {
+          items = data.items
+        } else if (data.data && Array.isArray(data.data)) {
+          items = data.data
+        }
+
+        allLocations.push(...items)
+
+        // Stop als er minder items zijn dan perPage (laatste pagina)
+        const lastPage = data.pageInfo?.lastPage ?? null
+        if (lastPage !== null && page >= lastPage) break
+        if (items.length < perPage) break
+        page++
+      } catch (error) {
+        console.error("❌ Error fetching picklocations:", error)
+        break
+      }
+    }
+
+    return allLocations
+  }
+
+  /**
+   * Haal stock locations op voor een product
+   */
+  async getProductStockLocations(
+    productUuid: string
+  ): Promise<{ picklocationUuid: string; picklocationName: string; stockQuantity: number; stockPriority: number }[]> {
+    const url = `${this.baseUrl}/products/${productUuid}/stock`
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: this.getHeaders(),
+        cache: "no-store",
+      })
+      if (response.status !== 200) return []
+      const data = await response.json()
+      return data.stockLocations || []
+    } catch (error) {
+      console.error("❌ Error fetching product stock locations:", error)
+      return []
+    }
+  }
+
+  /**
+   * Maak een stock location aan voor een product (koppel product aan picklocation)
+   * POST /products/{uuid}/stock/{locationUuid}
+   */
+  async createStockLocation(
+    productUuid: string,
+    pickLocationUuid: string,
+    stockQuantity: number = 0,
+    priority: number = 1
+  ): Promise<{ ok: boolean; error?: string }> {
+    const url = `${this.baseUrl}/products/${productUuid}/stock/${pickLocationUuid}`
+    try {
+      const body = new URLSearchParams()
+      body.append("stockQuantity", stockQuantity.toString())
+      body.append("priority", priority.toString())
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+        cache: "no-store",
+      })
+      if (response.status === 200) return { ok: true }
+      const text = await response.text()
+      let errorMessage = `HTTP ${response.status}`
+      try {
+        const json = JSON.parse(text)
+        if (json.errorMessage) errorMessage = json.errorMessage
+        else if (json.message) errorMessage = json.message
+      } catch {}
+      console.error(`❌ Create stock location failed for ${productUuid}: ${response.status} ${text}`)
+      return { ok: false, error: errorMessage }
+    } catch (error) {
+      console.error("❌ Error creating stock location:", error)
+      return { ok: false, error: String(error) }
+    }
+  }
+
+  /**
+   * Update stock op een specifieke locatie (set absoluut aantal)
+   * PUT /products/{uuid}/stock/{locationUuid}
+   */
+  async updateStockLocation(
+    productUuid: string,
+    pickLocationUuid: string,
+    stockQuantity: number,
+    reason?: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const url = `${this.baseUrl}/products/${productUuid}/stock/${pickLocationUuid}`
+    try {
+      const body = new URLSearchParams()
+      body.append("stockQuantity", stockQuantity.toString())
+      if (reason) body.append("reason", reason)
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+        cache: "no-store",
+      })
+      if (response.status === 200) return { ok: true }
+      const text = await response.text()
+      let errorMessage = `HTTP ${response.status}`
+      try {
+        const json = JSON.parse(text)
+        if (json.errorMessage) errorMessage = json.errorMessage
+        else if (json.message) errorMessage = json.message
+      } catch {}
+      console.error(`❌ Update stock location failed for ${productUuid}: ${response.status} ${text}`)
+      return { ok: false, error: errorMessage }
+    } catch (error) {
+      console.error("❌ Error updating stock location:", error)
+      return { ok: false, error: String(error) }
+    }
+  }
+
+  /**
+   * Muteer voorraad van een product
+   * Positief = toevoegen, negatief = verminderen
+   * Geeft { ok: true } of { ok: false, error: string } terug
+   */
+  async stockMutation(
+    productUuid: string,
+    mutation: number,
+    mutationReason?: string,
+    pickLocationUuid?: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const url = `${this.baseUrl}/products/${productUuid}/stock-mutation`
+    try {
+      const body = new URLSearchParams()
+      body.append("mutation", mutation.toString())
+      if (mutationReason) body.append("mutationReason", mutationReason)
+      if (pickLocationUuid) body.append("pickLocationUuid", pickLocationUuid)
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+        cache: "no-store",
+      })
+      if (response.status === 200) return { ok: true }
+      const text = await response.text()
+      let errorMessage = `HTTP ${response.status}`
+      try {
+        const json = JSON.parse(text)
+        if (json.errorMessage) errorMessage = json.errorMessage
+        else if (json.message) errorMessage = json.message
+      } catch {}
+      console.error(`❌ Stock mutation failed for ${productUuid}: ${response.status} ${text}`)
+      return { ok: false, error: errorMessage }
+    } catch (error) {
+      console.error("❌ Error stock mutation:", error)
+      return { ok: false, error: String(error) }
+    }
+  }
+
   // Bewaar laatste paginatie info
   public lastPaginationInfo: {
     totalItems: number
@@ -168,11 +363,20 @@ export class GoedGepicktAPI {
       const url = `${this.baseUrl}/orders${params.toString() ? `?${params.toString()}` : ""}`
       console.log(`🔗 GET ${url}`)
       
-      const response = await fetch(url, {
-        method: "GET",
-        headers: this.getHeaders(),
-        cache: "no-store",
-      })
+      // Fetch met retry bij rate limiting (429)
+      let response: Response | null = null
+      for (let attempt = 0; attempt < 4; attempt++) {
+        response = await fetch(url, {
+          method: "GET",
+          headers: this.getHeaders(),
+          cache: "no-store",
+        })
+        if (response.status !== 429) break
+        const waitMs = Math.min(2000 * Math.pow(2, attempt), 10000)
+        console.log(`⏳ Rate limited (429), wacht ${waitMs}ms... (poging ${attempt + 1}/4)`)
+        await new Promise(resolve => setTimeout(resolve, waitMs))
+      }
+      if (!response) return []
 
       console.log(`📡 Response status: ${response.status}`)
 

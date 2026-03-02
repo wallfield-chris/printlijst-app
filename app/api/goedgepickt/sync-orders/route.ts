@@ -93,11 +93,12 @@ export async function POST(request: NextRequest) {
       console.log(`🔑 Using API key: ${apiKeySetting.value.substring(0, 10)}...`)
       
       // Gebruik createdAfter filter om alleen recente orders op te halen
-      // Standaard: laatste 30 dagen, maar haal ALLE pagina's op
+      // Standaard: laatste 30 dagen
       const daysBack = 30
       const createdAfter = new Date()
       createdAfter.setDate(createdAfter.getDate() - daysBack)
-      const createdAfterStr = createdAfter.toISOString().split('T')[0] // YYYY-MM-DD
+      // Locale datum (niet UTC) om timezone bug te voorkomen
+      const createdAfterStr = `${createdAfter.getFullYear()}-${String(createdAfter.getMonth() + 1).padStart(2, "0")}-${String(createdAfter.getDate()).padStart(2, "0")}`
       
       console.log(`📅 Fetching orders created after ${createdAfterStr} (last ${daysBack} days)`)
       
@@ -114,24 +115,37 @@ export async function POST(request: NextRequest) {
       
       console.log(`📊 Found ${totalItems} orders across ${totalPages} pages`)
       
-      // Stap 2: Haal ALLE pagina's op (van achteren naar voren voor nieuwste eerst)
-      const allOrders = [...firstPageOrders]
+      // Stap 2: Haal ALLE pagina's op van ACHTEREN NAAR VOREN (nieuwste eerst)
+      // De API sorteert op createDate ASC, dus nieuwste orders staan op de laatste pagina's
+      // Door achteren te beginnen pakken we eerst de recentste (meest relevante) orders
+      const allOrders: any[] = []
       
-      for (let page = 2; page <= totalPages; page++) {
-        console.log(`📄 Fetching page ${page}/${totalPages}...`)
-        const pageOrders = await api.getOrders({ 
-          orderstatus: "backorder", 
-          createdAfter: createdAfterStr,
-          page 
-        })
-        
-        if (pageOrders.length === 0) {
-          console.log("   No more orders found")
-          break
+      // Begin met de laatste pagina (nieuwste orders)
+      for (let page = totalPages; page >= 1; page--) {
+        // Pagina 1 hebben we al
+        if (page === 1) {
+          allOrders.push(...firstPageOrders)
+          continue
         }
         
-        allOrders.push(...pageOrders)
-        console.log(`   Found ${pageOrders.length} orders (total: ${allOrders.length})`)
+        console.log(`📄 Fetching page ${page}/${totalPages} (achteruit)...`)
+        try {
+          const pageOrders = await api.getOrders({ 
+            orderstatus: "backorder", 
+            createdAfter: createdAfterStr,
+            page 
+          })
+          
+          if (pageOrders.length === 0) {
+            console.log("   Lege pagina, overslaan")
+            continue
+          }
+          
+          allOrders.push(...pageOrders)
+          console.log(`   Found ${pageOrders.length} orders (total: ${allOrders.length})`)
+        } catch (pageError) {
+          console.error(`   ⚠️ Fout bij pagina ${page}, ga verder:`, pageError)
+        }
       }
       
       // Stap 3: Filter alleen orders die daadwerkelijk status 'backorder' hebben
@@ -217,16 +231,15 @@ export async function POST(request: NextRequest) {
               }
 
               // Check stock via product details - alleen printen als NIET op voorraad
+              // freeStock < 0 = écht in backorder | freeStock >= 0 = voorraad aanwezig of gereserveerd
               if (product.productUuid) {
                 try {
                   const stockDetails = await api.getProduct(product.productUuid)
                   if (stockDetails) {
                     const freeStock = stockDetails.stock?.freeStock ?? (stockDetails as any).freeStock ?? 0
-                    const totalStock = stockDetails.stock?.totalStock ?? (stockDetails as any).totalStock ?? 0
-                    
-                    // Als er voldoende voorraad is, niet printen
-                    if (freeStock >= (product.productQuantity || 1)) {
-                      console.log(`   📦 In stock: ${product.sku || 'no-sku'} - ${product.productName} (freeStock: ${freeStock}, needed: ${product.productQuantity})`)
+
+                    if (freeStock >= 0) {
+                      console.log(`   📦 In stock: ${product.sku || 'no-sku'} - ${product.productName} (freeStock: ${freeStock})`)
                       totalExcluded++
                       debugInfo.excludedProducts++
                       continue

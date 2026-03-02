@@ -1,221 +1,259 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo, Fragment } from "react"
+import ChangeBadge from "@/app/components/ChangeBadge"
 
-interface User {
+interface Operator {
   id: string
   name: string
-  email: string
-  role?: string
 }
 
-interface PrintJob {
-  id: string
-  tags?: string
+interface Completion {
+  time: string
+  jobId: string
   quantity: number
-  completedAt?: string
-  completedBy?: string
-  completedByUser?: User
-}
-
-interface ProductionSpec {
-  id: string
-  tag: string
-  m2: number | null
-  time: number | null
-}
-
-interface DailyM2Data {
-  date: string
+  format: string | null
   m2: number
+  gapMinutes: number | null
+  isIdle: boolean
 }
 
-interface DailyJobsData {
+interface IdlePeriod {
+  from: string
+  to: string
+  durationMinutes: number
+}
+
+interface DayAnalysis {
   date: string
-  jobs: number
+  operatorId: string
+  operatorName: string
+  firstCompletion: string
+  lastCompletion: string
+  totalActiveMinutes: number
+  totalSpanMinutes: number
+  totalIdleMinutes: number
+  idleCount: number
+  jobCount: number
+  totalQuantity: number
+  totalM2: number
+  estimatedPrintMinutes: number
+  completions: Completion[]
+  idlePeriods: IdlePeriod[]
 }
 
-export default function AnalyticsPage() {
+interface DailySummary {
+  date: string
+  totalActiveMinutes: number
+  totalSpanMinutes: number
+  totalIdleMinutes: number
+  idleCount: number
+  jobCount: number
+  totalQuantity: number
+  totalM2: number
+  estimatedPrintMinutes: number
+  operatorCount: number
+}
+
+interface PrintDataResponse {
+  operators: Operator[]
+  dayAnalyses: DayAnalysis[]
+  dailySummary: DailySummary[]
+}
+
+function formatMinutes(min: number): string {
+  if (min === 0) return "0m"
+  const h = Math.floor(min / 60)
+  const m = Math.round(min % 60)
+  if (h === 0) return `${m}m`
+  return `${h}u ${m}m`
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("nl-NL", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  })
+}
+
+function formatDateLong(dateStr: string): string {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("nl-NL", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  })
+}
+
+export default function PrintDataPage() {
   const [loading, setLoading] = useState(true)
-  const [users, setUsers] = useState<User[]>([]) 
-  const [selectedUserId, setSelectedUserId] = useState("all")
+  const [data, setData] = useState<PrintDataResponse | null>(null)
+  const [prevData, setPrevData] = useState<PrintDataResponse | null>(null)
+  const [selectedOperator, setSelectedOperator] = useState("all")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
-  const [selectedM2Point, setSelectedM2Point] = useState<number | null>(null)
-  const [selectedJobsPoint, setSelectedJobsPoint] = useState<number | null>(null)
-  const [completedJobs, setCompletedJobs] = useState<PrintJob[]>([])
-  const [productionSpecs, setProductionSpecs] = useState<ProductionSpec[]>([])
-  const [dailyM2Data, setDailyM2Data] = useState<DailyM2Data[]>([])
-  const [dailyJobsData, setDailyJobsData] = useState<DailyJobsData[]>([])
+  const [expandedDay, setExpandedDay] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "idle">("overview")
 
   useEffect(() => {
-    // Set default dates: last 30 days
     const today = new Date()
     const thirtyDaysAgo = new Date(today)
     thirtyDaysAgo.setDate(today.getDate() - 30)
-    
-    setEndDate(today.toISOString().split('T')[0])
-    setStartDate(thirtyDaysAgo.toISOString().split('T')[0])
-    
-    fetchData()
+    setEndDate(today.toISOString().split("T")[0])
+    setStartDate(thirtyDaysAgo.toISOString().split("T")[0])
   }, [])
 
   useEffect(() => {
-    if (startDate && endDate) {
-      calculateDailyM2()
-      calculateDailyJobs()
-    }
-  }, [completedJobs, productionSpecs, selectedUserId, startDate, endDate])
+    if (startDate && endDate) fetchData()
+  }, [startDate, endDate, selectedOperator])
 
   const fetchData = async () => {
     try {
       setLoading(true)
-      
-      const [jobsResponse, specsResponse, usersResponse] = await Promise.all([
-        fetch("/api/printjobs"),
-        fetch("/api/production-specs"),
-        fetch("/api/users"),
+      const params = new URLSearchParams({
+        start: startDate,
+        end: endDate,
+        operator: selectedOperator,
+      })
+
+      // Bereken vorige periode (zelfde lengte, direct ervoor)
+      const start = new Date(startDate + "T00:00:00")
+      const end = new Date(endDate + "T00:00:00")
+      const diffMs = end.getTime() - start.getTime()
+      const prevEnd = new Date(start.getTime() - 1) // dag vóór startDate
+      const prevStart = new Date(prevEnd.getTime() - diffMs)
+      const prevParams = new URLSearchParams({
+        start: prevStart.toISOString().split("T")[0],
+        end: prevEnd.toISOString().split("T")[0],
+        operator: selectedOperator,
+      })
+
+      const [res, prevRes] = await Promise.all([
+        fetch(`/api/stats/print-data?${params}`),
+        fetch(`/api/stats/print-data?${prevParams}`),
       ])
-
-      if (jobsResponse.ok) {
-        const jobs = await jobsResponse.json()
-        setCompletedJobs(jobs.filter((j: PrintJob) => j.completedAt))
+      if (res.ok) {
+        const json = await res.json()
+        setData(json)
       }
-
-      if (specsResponse.ok) {
-        const specs = await specsResponse.json()
-        setProductionSpecs(specs)
-      }
-
-      if (usersResponse.ok) {
-        const usersData = await usersResponse.json()
-        setUsers(usersData.filter((u: User) => u.role === "employee"))
+      if (prevRes.ok) {
+        const prevJson = await prevRes.json()
+        setPrevData(prevJson)
       }
     } catch (error) {
-      console.error("Error fetching data:", error)
+      console.error("Error fetching print data:", error)
     } finally {
       setLoading(false)
     }
   }
 
-  const calculateDailyM2 = () => {
-    if (!startDate || !endDate) return
+  // Gefilterde dag-analyses per operator
+  const filteredDays = useMemo(() => {
+    if (!data) return []
+    if (selectedOperator === "all") return data.dayAnalyses
+    return data.dayAnalyses.filter(d => d.operatorId === selectedOperator)
+  }, [data, selectedOperator])
 
-    const start = new Date(startDate + 'T00:00:00')
-    const end = new Date(endDate + 'T23:59:59')
-    
-    // Filter jobs by user and date range
-    const filteredJobs = completedJobs.filter(job => {
-      if (!job.completedAt) return false
-      
-      const jobDate = new Date(job.completedAt)
-      if (jobDate < start || jobDate > end) return false
-      
-      if (selectedUserId !== "all" && job.completedBy !== selectedUserId) return false
-      
-      return true
-    })
-
-    // Initialize all dates in range with 0
-    const m2ByDate: { [key: string]: number } = {}
-    const startDateStr = startDate // Already in YYYY-MM-DD format
-    const endDateStr = endDate     // Already in YYYY-MM-DD format
-    
-    const currentDate = new Date(startDateStr + 'T12:00:00') // Use noon to avoid timezone issues
-    const endDateObj = new Date(endDateStr + 'T12:00:00')
-    
-    while (currentDate <= endDateObj) {
-      const dateStr = currentDate.toISOString().split('T')[0]
-      m2ByDate[dateStr] = 0
-      currentDate.setDate(currentDate.getDate() + 1)
+  // Totalen over de periode
+  const totals = useMemo(() => {
+    const t = {
+      totalActiveMinutes: 0,
+      totalIdleMinutes: 0,
+      totalSpanMinutes: 0,
+      jobCount: 0,
+      totalQuantity: 0,
+      totalM2: 0,
+      estimatedPrintMinutes: 0,
+      idleCount: 0,
+      workDays: 0,
     }
-    
-    // Calculate M2 for each job
-    for (const job of filteredJobs) {
-      const jobDate = new Date(job.completedAt!)
-      const date = jobDate.toISOString().split('T')[0]
-      
-      if (job.tags) {
-        const jobTags = job.tags.split(',').map(t => t.trim())
-        
-        for (const tag of jobTags) {
-          const spec = productionSpecs.find(s => s.tag.toLowerCase() === tag.toLowerCase())
-          if (spec && spec.m2) {
-            m2ByDate[date] += spec.m2 * job.quantity
-          }
+    for (const d of filteredDays) {
+      t.totalActiveMinutes += d.totalActiveMinutes
+      t.totalIdleMinutes += d.totalIdleMinutes
+      t.totalSpanMinutes += d.totalSpanMinutes
+      t.jobCount += d.jobCount
+      t.totalQuantity += d.totalQuantity
+      t.totalM2 += d.totalM2
+      t.estimatedPrintMinutes += d.estimatedPrintMinutes
+      t.idleCount += d.idleCount
+      t.workDays++
+    }
+    return t
+  }, [filteredDays])
+
+  // Totalen vorige periode
+  const prevTotals = useMemo(() => {
+    const t = {
+      totalActiveMinutes: 0,
+      totalIdleMinutes: 0,
+      totalSpanMinutes: 0,
+      jobCount: 0,
+      totalQuantity: 0,
+      totalM2: 0,
+      estimatedPrintMinutes: 0,
+      idleCount: 0,
+      workDays: 0,
+    }
+    if (!prevData) return t
+    const days = selectedOperator === "all"
+      ? prevData.dayAnalyses
+      : prevData.dayAnalyses.filter(d => d.operatorId === selectedOperator)
+    for (const d of days) {
+      t.totalActiveMinutes += d.totalActiveMinutes
+      t.totalIdleMinutes += d.totalIdleMinutes
+      t.totalSpanMinutes += d.totalSpanMinutes
+      t.jobCount += d.jobCount
+      t.totalQuantity += d.totalQuantity
+      t.totalM2 += d.totalM2
+      t.estimatedPrintMinutes += d.estimatedPrintMinutes
+      t.idleCount += d.idleCount
+      t.workDays++
+    }
+    return t
+  }, [prevData, selectedOperator])
+
+  // Dagelijks overzicht (voor grafieken)
+  const dailyChartData = useMemo(() => {
+    if (!data) return []
+    if (selectedOperator === "all") return data.dailySummary
+
+    // Aggregeer per dag voor geselecteerde operator
+    const byDate: Record<string, DailySummary> = {}
+    for (const d of filteredDays) {
+      if (!byDate[d.date]) {
+        byDate[d.date] = {
+          date: d.date,
+          totalActiveMinutes: 0,
+          totalSpanMinutes: 0,
+          totalIdleMinutes: 0,
+          idleCount: 0,
+          jobCount: 0,
+          totalQuantity: 0,
+          totalM2: 0,
+          estimatedPrintMinutes: 0,
+          operatorCount: 1,
         }
       }
+      const s = byDate[d.date]
+      s.totalActiveMinutes += d.totalActiveMinutes
+      s.totalSpanMinutes = Math.max(s.totalSpanMinutes, d.totalSpanMinutes)
+      s.totalIdleMinutes += d.totalIdleMinutes
+      s.idleCount += d.idleCount
+      s.jobCount += d.jobCount
+      s.totalQuantity += d.totalQuantity
+      s.totalM2 += d.totalM2
+      s.estimatedPrintMinutes += d.estimatedPrintMinutes
     }
 
-    // Convert to array and sort by date
-    const data: DailyM2Data[] = Object.entries(m2ByDate)
-      .map(([date, m2]) => ({ date, m2 }))
-      .sort((a, b) => a.date.localeCompare(b.date))
+    return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date))
+  }, [data, selectedOperator, filteredDays])
 
-    setDailyM2Data(data)
-  }
-
-  const calculateDailyJobs = () => {
-    if (!startDate || !endDate) return
-
-    const start = new Date(startDate + 'T00:00:00')
-    const end = new Date(endDate + 'T23:59:59')
-    
-    // Filter jobs by user and date range
-    const filteredJobs = completedJobs.filter(job => {
-      if (!job.completedAt) return false
-      
-      const jobDate = new Date(job.completedAt)
-      if (jobDate < start || jobDate > end) return false
-      
-      if (selectedUserId !== "all" && job.completedBy !== selectedUserId) return false
-      
-      return true
-    })
-
-    // Initialize all dates in range with 0
-    const jobsByDate: { [key: string]: number } = {}
-    const startDateStr = startDate // Already in YYYY-MM-DD format
-    const endDateStr = endDate     // Already in YYYY-MM-DD format
-    
-    const currentDate = new Date(startDateStr + 'T12:00:00') // Use noon to avoid timezone issues
-    const endDateObj = new Date(endDateStr + 'T12:00:00')
-    
-    while (currentDate <= endDateObj) {
-      const dateStr = currentDate.toISOString().split('T')[0]
-      jobsByDate[dateStr] = 0
-      currentDate.setDate(currentDate.getDate() + 1)
-    }
-    
-    // Count jobs per date
-    for (const job of filteredJobs) {
-      const jobDate = new Date(job.completedAt!)
-      const date = jobDate.toISOString().split('T')[0]
-      
-      if (jobsByDate[date] !== undefined) {
-        jobsByDate[date]++
-      }
-    }
-
-    // Convert to array and sort by date
-    const data: DailyJobsData[] = Object.entries(jobsByDate)
-      .map(([date, jobs]) => ({ date, jobs }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-
-    setDailyJobsData(data)
-  }
-
-  const getMaxM2 = () => {
-    if (dailyM2Data.length === 0) return 100
-    return Math.max(...dailyM2Data.map(d => d.m2), 100)
-  }
-
-  const getMaxJobs = () => {
-    if (dailyJobsData.length === 0) return 10
-    return Math.max(...dailyJobsData.map(d => d.jobs), 10)
-  }
-
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="p-8">
         <div className="flex items-center justify-center py-12">
@@ -227,395 +265,591 @@ export default function AnalyticsPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-8 flex justify-between items-start">
+      {/* Header */}
+      <div className="mb-8 flex flex-col sm:flex-row justify-between items-start gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Analytics</h1>
-          <p className="text-gray-600 mt-2">Uitgebreide analyses en rapporten</p>
+          <h1 className="text-3xl font-bold text-gray-900">Print Data</h1>
+          <p className="text-gray-600 mt-1">Analyseer werktijden, pauzes en productiviteit van print operators</p>
         </div>
-        
-        {/* Filters */}
-        <div className="flex gap-4 items-end">
-          {/* Werknemer selectie */}
+
+        <div className="flex flex-wrap gap-3 items-end">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Werknemer
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Operator</label>
             <select
-              value={selectedUserId}
-              onChange={(e) => setSelectedUserId(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              value={selectedOperator}
+              onChange={(e) => setSelectedOperator(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             >
-              <option value="all">Alle werknemers</option>
-              {users.map(user => (
-                <option key={user.id} value={user.id}>{user.name}</option>
+              <option value="all">Alle operators</option>
+              {data?.operators.map(op => (
+                <option key={op.id} value={op.id}>{op.name}</option>
               ))}
             </select>
           </div>
-
-          {/* Datum van */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Van
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Van</label>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             />
           </div>
-
-          {/* Datum tot */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tot
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tot</label>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             />
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* M² per dag grafiek */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">M² Geprint per Dag</h2>
-          {dailyM2Data.length > 0 ? (
-            <div className="space-y-2">
-              {/* Line chart */}
-              <div className="h-80 border border-gray-200 rounded p-4 bg-gradient-to-b from-blue-50 to-white">
-                <svg className="w-full h-full" viewBox="0 0 1000 300" preserveAspectRatio="none">
-                  {/* Grid lines */}
-                  <line x1="0" y1="0" x2="1000" y2="0" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="75" x2="1000" y2="75" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="150" x2="1000" y2="150" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="225" x2="1000" y2="225" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="300" x2="1000" y2="300" stroke="#e5e7eb" strokeWidth="2" />
-                  
-                  {/* Area under the line */}
-                  <defs>
-                    <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.05" />
-                    </linearGradient>
-                  </defs>
-                  
-                  {(() => {
-                    const maxM2 = getMaxM2()
-                    const points = dailyM2Data.map((data, index) => {
-                      const x = (index / (dailyM2Data.length - 1)) * 1000
-                      const y = maxM2 > 0 ? 300 - ((data.m2 / maxM2) * 280) : 300
-                      return `${x},${y}`
-                    }).join(' ')
-                    
-                    const areaPoints = `0,300 ${points} 1000,300`
-                    
-                    return (
-                      <>
-                        {/* Area fill */}
-                        <polygon points={areaPoints} fill="url(#areaGradient)" />
-                        
-                        {/* Line */}
-                        <polyline
-                          points={points}
-                          fill="none"
-                          stroke="#3b82f6"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        
-                        {/* Data points */}
-                        {dailyM2Data.map((data, index) => {
-                          const x = (index / (dailyM2Data.length - 1)) * 1000
-                          const y = maxM2 > 0 ? 300 - ((data.m2 / maxM2) * 280) : 300
-                          const isSelected = selectedM2Point === index
-                          return (
-                            <g key={index}>
-                              <circle
-                                cx={x}
-                                cy={y}
-                                r={isSelected ? "8" : "6"}
-                                fill="#3b82f6"
-                                stroke="white"
-                                strokeWidth="3"
-                                className="cursor-pointer transition-all"
-                                onClick={() => setSelectedM2Point(selectedM2Point === index ? null : index)}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.setAttribute('r', '8')
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (!isSelected) e.currentTarget.setAttribute('r', '6')
-                                }}
-                              />
-                            </g>
-                          )
-                        })}
-                      </>
-                    )
-                  })()}
-                </svg>
-              </div>
-              
-              {/* Selected point info */}
-              {selectedM2Point !== null && dailyM2Data[selectedM2Point] && (
-                <div className="mt-3 p-3 bg-blue-100 border border-blue-300 rounded-lg">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="text-sm font-semibold text-blue-900">
-                        {new Date(dailyM2Data[selectedM2Point].date).toLocaleDateString('nl-NL', { 
-                          weekday: 'long',
-                          day: 'numeric', 
-                          month: 'long',
-                          year: 'numeric'
-                        })}
-                      </div>
-                      <div className="text-2xl font-bold text-blue-600 mt-1">
-                        {dailyM2Data[selectedM2Point].m2.toFixed(2)} m²
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setSelectedM2Point(null)}
-                      className="text-blue-600 hover:text-blue-800 text-xl font-bold"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              )}
-              
-              {/* X-axis labels */}
-              <div className="flex justify-between text-xs text-gray-500 mt-2">
-                <span>{dailyM2Data.length > 0 ? new Date(dailyM2Data[0].date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : ''}</span>
-                <span>{dailyM2Data.length > 0 ? new Date(dailyM2Data[dailyM2Data.length - 1].date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : ''}</span>
-              </div>
-              
-              {/* Total */}
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                <div className="text-sm text-gray-600">Totaal in periode</div>
-                <div className="text-2xl font-bold text-blue-600">
-                  {(() => {
-                    const total = dailyM2Data.reduce((sum, d) => sum + d.m2, 0)
-                    return isNaN(total) || total === 0 ? '0.00' : total.toFixed(2)
-                  })()} m²
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-12 text-gray-500">
-              Geen data beschikbaar voor de geselecteerde periode
-            </div>
-          )}
-        </div>
-
-        {/* Voltooide printjobs per dag */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Voltooide Printjobs per Dag</h2>
-          {dailyJobsData.length > 0 ? (
-            <div className="space-y-2">
-              {/* Line chart */}
-              <div className="h-80 border border-gray-200 rounded p-4 bg-gradient-to-b from-green-50 to-white">
-                <svg className="w-full h-full" viewBox="0 0 1000 300" preserveAspectRatio="none">
-                  {/* Grid lines */}
-                  <line x1="0" y1="0" x2="1000" y2="0" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="75" x2="1000" y2="75" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="150" x2="1000" y2="150" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="225" x2="1000" y2="225" stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1="0" y1="300" x2="1000" y2="300" stroke="#e5e7eb" strokeWidth="2" />
-                  
-                  {/* Area under the line */}
-                  <defs>
-                    <linearGradient id="jobsAreaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                      <stop offset="100%" stopColor="#22c55e" stopOpacity="0.05" />
-                    </linearGradient>
-                  </defs>
-                  
-                  {(() => {
-                    const maxJobs = getMaxJobs()
-                    const points = dailyJobsData.map((data, index) => {
-                      const x = (index / (dailyJobsData.length - 1)) * 1000
-                      const y = maxJobs > 0 ? 300 - ((data.jobs / maxJobs) * 280) : 300
-                      return `${x},${y}`
-                    }).join(' ')
-                    
-                    const areaPoints = `0,300 ${points} 1000,300`
-                    
-                    return (
-                      <>
-                        {/* Area fill */}
-                        <polygon points={areaPoints} fill="url(#jobsAreaGradient)" />
-                        
-                        {/* Line */}
-                        <polyline
-                          points={points}
-                          fill="none"
-                          stroke="#22c55e"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        
-                        {/* Data points */}
-                        {dailyJobsData.map((data, index) => {
-                          const x = (index / (dailyJobsData.length - 1)) * 1000
-                          const y = maxJobs > 0 ? 300 - ((data.jobs / maxJobs) * 280) : 300
-                          const isSelected = selectedJobsPoint === index
-                          return (
-                            <g key={index}>
-                              <circle
-                                cx={x}
-                                cy={y}
-                                r={isSelected ? "8" : "6"}
-                                fill="#22c55e"
-                                stroke="white"
-                                strokeWidth="3"
-                                className="cursor-pointer transition-all"
-                                onClick={() => setSelectedJobsPoint(selectedJobsPoint === index ? null : index)}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.setAttribute('r', '8')
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (!isSelected) e.currentTarget.setAttribute('r', '6')
-                                }}
-                              />
-                            </g>
-                          )
-                        })}
-                      </>
-                    )
-                  })()}
-                </svg>
-              </div>
-              
-              {/* Selected point info */}
-              {selectedJobsPoint !== null && dailyJobsData[selectedJobsPoint] && (
-                <div className="mt-3 p-3 bg-green-100 border border-green-300 rounded-lg">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="text-sm font-semibold text-green-900">
-                        {new Date(dailyJobsData[selectedJobsPoint].date).toLocaleDateString('nl-NL', { 
-                          weekday: 'long',
-                          day: 'numeric', 
-                          month: 'long',
-                          year: 'numeric'
-                        })}
-                      </div>
-                      <div className="text-2xl font-bold text-green-600 mt-1">
-                        {dailyJobsData[selectedJobsPoint].jobs} jobs
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setSelectedJobsPoint(null)}
-                      className="text-green-600 hover:text-green-800 text-xl font-bold"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              )}
-              
-              {/* X-axis labels */}
-              <div className="flex justify-between text-xs text-gray-500 mt-2">
-                <span>{dailyJobsData.length > 0 ? new Date(dailyJobsData[0].date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : ''}</span>
-                <span>{dailyJobsData.length > 0 ? new Date(dailyJobsData[dailyJobsData.length - 1].date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) : ''}</span>
-              </div>
-              
-              {/* Total */}
-              <div className="mt-4 p-3 bg-green-50 rounded-lg">
-                <div className="text-sm text-gray-600">Totaal in periode</div>
-                <div className="text-2xl font-bold text-green-600">
-                  {dailyJobsData.reduce((sum, d) => sum + d.jobs, 0)} jobs
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-12 text-gray-500">
-              Geen data beschikbaar voor de geselecteerde periode
-            </div>
-          )}
-        </div>
-
-        {/* Top producten */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Meest Geprinte Producten</h2>
-          <div className="text-center py-12 text-gray-500">
-            Top 10 lijst komt hier...
+      {/* KPI kaarten */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Werkdagen</p>
+            <ChangeBadge current={totals.workDays} previous={prevTotals.workDays} />
           </div>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{totals.workDays}</p>
         </div>
-
-        {/* Performance metrics */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Performance Metrics</h2>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm font-medium text-gray-700">Gemiddelde doorlooptijd</span>
-              <span className="text-lg font-bold text-blue-600">12m 34s</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm font-medium text-gray-700">Jobs per uur</span>
-              <span className="text-lg font-bold text-green-600">8.5</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="text-sm font-medium text-gray-700">Error rate</span>
-              <span className="text-lg font-bold text-red-600">0.5%</span>
-            </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Actieve Tijd</p>
+            <ChangeBadge current={totals.totalActiveMinutes} previous={prevTotals.totalActiveMinutes} />
           </div>
+          <p className="text-2xl font-bold text-blue-600 mt-1">{formatMinutes(totals.totalActiveMinutes)}</p>
+          <p className="text-xs text-gray-400">tussen completions</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Idle Tijd</p>
+            <ChangeBadge current={totals.totalIdleMinutes} previous={prevTotals.totalIdleMinutes} invertColor />
+          </div>
+          <p className="text-2xl font-bold text-orange-500 mt-1">{formatMinutes(totals.totalIdleMinutes)}</p>
+          <p className="text-xs text-gray-400">{totals.idleCount} pauzes (&gt;5 min)</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Jobs Voltooid</p>
+            <ChangeBadge current={totals.jobCount} previous={prevTotals.jobCount} />
+          </div>
+          <p className="text-2xl font-bold text-green-600 mt-1">{totals.jobCount}</p>
+          <p className="text-xs text-gray-400">{totals.totalQuantity} stuks</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">M² Geprint</p>
+            <ChangeBadge current={totals.totalM2} previous={prevTotals.totalM2} />
+          </div>
+          <p className="text-2xl font-bold text-indigo-600 mt-1">{totals.totalM2.toFixed(2)}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Gesch. Printtijd</p>
+            <ChangeBadge current={totals.estimatedPrintMinutes} previous={prevTotals.estimatedPrintMinutes} />
+          </div>
+          <p className="text-2xl font-bold text-purple-600 mt-1">{formatMinutes(totals.estimatedPrintMinutes)}</p>
         </div>
       </div>
 
-      {/* Maandoverzicht */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Maandoverzicht</h2>
+      {/* Tabs */}
+      <div className="mb-6 border-b border-gray-200">
+        <div className="flex gap-6">
+          {[
+            { key: "overview" as const, label: "Dagelijks Overzicht" },
+            { key: "timeline" as const, label: "Activiteit Timeline" },
+            { key: "idle" as const, label: "Pauze Analyse" },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.key
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-        <div className="p-6">
-          <div className="overflow-x-auto">
+      </div>
+
+      {/* Tab content */}
+      {activeTab === "overview" && (
+        <div className="space-y-6">
+          {/* Grafiek: Actieve tijd vs Idle per dag */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Actieve Tijd vs Idle Tijd per Dag</h2>
+            {dailyChartData.length > 0 ? (
+              <div>
+                <div className="h-72 flex items-end gap-1 border-b border-l border-gray-200 pl-1 pb-1 relative">
+                  {/* Y-axis label */}
+                  <div className="absolute -left-1 top-0 bottom-0 flex flex-col justify-between text-xs text-gray-400 -translate-x-full pr-2">
+                    <span>{formatMinutes(Math.max(...dailyChartData.map(d => d.totalActiveMinutes + d.totalIdleMinutes), 60))}</span>
+                    <span>0m</span>
+                  </div>
+                  {dailyChartData.map((day, i) => {
+                    const maxVal = Math.max(...dailyChartData.map(d => d.totalActiveMinutes + d.totalIdleMinutes), 60)
+                    const activeH = Math.max((day.totalActiveMinutes / maxVal) * 100, 0)
+                    const idleH = Math.max((day.totalIdleMinutes / maxVal) * 100, 0)
+                    return (
+                      <div key={i} className="flex-1 flex flex-col items-center justify-end gap-0 min-w-0 group relative">
+                        {/* Tooltip */}
+                        <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
+                          <div className="font-medium">{formatDate(day.date)}</div>
+                          <div className="text-blue-300">Actief: {formatMinutes(day.totalActiveMinutes)}</div>
+                          <div className="text-orange-300">Idle: {formatMinutes(day.totalIdleMinutes)}</div>
+                          <div className="text-gray-300">{day.jobCount} jobs</div>
+                        </div>
+                        {/* Idle (top, oranje) */}
+                        <div
+                          className="w-full bg-orange-400 rounded-t-sm transition-all min-h-0"
+                          style={{ height: `${idleH}%` }}
+                        />
+                        {/* Active (bottom, blauw) */}
+                        <div
+                          className="w-full bg-blue-500 transition-all min-h-0"
+                          style={{ height: `${activeH}%` }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* X-axis */}
+                <div className="flex gap-1 mt-1 pl-1">
+                  {dailyChartData.map((day, i) => (
+                    <div key={i} className="flex-1 text-center min-w-0">
+                      <span className="text-[10px] text-gray-400 truncate block">
+                        {dailyChartData.length <= 14
+                          ? formatDate(day.date)
+                          : i % Math.ceil(dailyChartData.length / 10) === 0
+                            ? formatDate(day.date)
+                            : ""
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {/* Legend */}
+                <div className="flex gap-6 mt-4 text-sm text-gray-600">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-3 bg-blue-500 rounded-sm" />
+                    <span>Actieve tijd (tussen completions, &lt;5 min gaps)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-3 bg-orange-400 rounded-sm" />
+                    <span>Idle / pauze (&gt;5 min gaps)</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
+            )}
+          </div>
+
+          {/* Grafiek: Jobs per dag */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Jobs Voltooid per Dag</h2>
+            {dailyChartData.length > 0 ? (
+              <div>
+                <div className="h-48 flex items-end gap-1 border-b border-l border-gray-200 pl-1 pb-1">
+                  {dailyChartData.map((day, i) => {
+                    const maxJobs = Math.max(...dailyChartData.map(d => d.jobCount), 5)
+                    const h = Math.max((day.jobCount / maxJobs) * 100, day.jobCount > 0 ? 2 : 0)
+                    return (
+                      <div key={i} className="flex-1 flex items-end justify-center min-w-0 group relative">
+                        <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
+                          <div className="font-medium">{formatDate(day.date)}</div>
+                          <div>{day.jobCount} jobs ({day.totalQuantity} stuks)</div>
+                          <div>{day.totalM2.toFixed(2)} m²</div>
+                        </div>
+                        <div
+                          className="w-full bg-green-500 rounded-t-sm transition-all"
+                          style={{ height: `${h}%` }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="flex gap-1 mt-1 pl-1">
+                  {dailyChartData.map((day, i) => (
+                    <div key={i} className="flex-1 text-center min-w-0">
+                      <span className="text-[10px] text-gray-400 truncate block">
+                        {dailyChartData.length <= 14
+                          ? formatDate(day.date)
+                          : i % Math.ceil(dailyChartData.length / 10) === 0
+                            ? formatDate(day.date)
+                            : ""
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
+            )}
+          </div>
+
+          {/* Grafiek: M² per dag */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">M² Geprint per Dag</h2>
+            {dailyChartData.length > 0 ? (
+              <div>
+                <div className="h-48 flex items-end gap-1 border-b border-l border-gray-200 pl-1 pb-1">
+                  {dailyChartData.map((day, i) => {
+                    const maxM2 = Math.max(...dailyChartData.map(d => d.totalM2), 1)
+                    const h = Math.max((day.totalM2 / maxM2) * 100, day.totalM2 > 0 ? 2 : 0)
+                    return (
+                      <div key={i} className="flex-1 flex items-end justify-center min-w-0 group relative">
+                        <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
+                          <div className="font-medium">{formatDate(day.date)}</div>
+                          <div>{day.totalM2.toFixed(2)} m²</div>
+                        </div>
+                        <div
+                          className="w-full bg-indigo-500 rounded-t-sm transition-all"
+                          style={{ height: `${h}%` }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="flex gap-1 mt-1 pl-1">
+                  {dailyChartData.map((day, i) => (
+                    <div key={i} className="flex-1 text-center min-w-0">
+                      <span className="text-[10px] text-gray-400 truncate block">
+                        {dailyChartData.length <= 14
+                          ? formatDate(day.date)
+                          : i % Math.ceil(dailyChartData.length / 10) === 0
+                            ? formatDate(day.date)
+                            : ""
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "timeline" && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500 mb-4">
+            Klik op een dag om de individuele completions te zien met timestamps en tijdsgaps.
+          </p>
+
+          {/* Dag tabel */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Maand
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Totaal Jobs
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Voltooid
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Gem. Tijd
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Trend
-                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Operator</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Eerste</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Laatste</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actief</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Idle</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Jobs</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">M²</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase"></th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                <tr>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    November 2025
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    245
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    242
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    11m 23s
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <span className="text-green-600">↑ 12%</span>
-                  </td>
-                </tr>
+              <tbody className="divide-y divide-gray-200">
+                {filteredDays.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">Geen data beschikbaar</td>
+                  </tr>
+                ) : (
+                  filteredDays.map((day) => {
+                    const key = `${day.date}-${day.operatorId}`
+                    const isExpanded = expandedDay === key
+                    return (
+                      <Fragment key={key}>
+                        <tr
+                          className="hover:bg-gray-50 cursor-pointer transition-colors"
+                          onClick={() => setExpandedDay(isExpanded ? null : key)}
+                        >
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{formatDateLong(day.date)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{day.operatorName}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-600">{formatTime(day.firstCompletion)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-600">{formatTime(day.lastCompletion)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-medium text-blue-600">{formatMinutes(day.totalActiveMinutes)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-medium text-orange-500">{formatMinutes(day.totalIdleMinutes)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-600">{day.jobCount}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-600">{day.totalM2.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block transition-transform ${isExpanded ? "rotate-180" : ""}`}>▼</span>
+                          </td>
+                        </tr>
+
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={9} className="bg-gray-50 px-4 py-4">
+                              {/* Timeline visualisatie */}
+                              <div className="mb-4">
+                                <h4 className="text-sm font-semibold text-gray-700 mb-3">Activiteit Timeline</h4>
+                                <TimelineBar completions={day.completions} />
+                              </div>
+
+                              {/* Detail tabel */}
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full text-sm">
+                                  <thead>
+                                    <tr className="text-xs text-gray-500 uppercase">
+                                      <th className="pr-4 py-1 text-left">#</th>
+                                      <th className="pr-4 py-1 text-left">Tijd</th>
+                                      <th className="pr-4 py-1 text-left">Formaat</th>
+                                      <th className="pr-4 py-1 text-right">Stuks</th>
+                                      <th className="pr-4 py-1 text-right">M²</th>
+                                      <th className="pr-4 py-1 text-right">Gap</th>
+                                      <th className="pr-4 py-1 text-center">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {day.completions.map((c, i) => (
+                                      <tr key={i} className={c.isIdle ? "bg-orange-50" : ""}>
+                                        <td className="pr-4 py-1 text-gray-400">{i + 1}</td>
+                                        <td className="pr-4 py-1 font-mono text-gray-800">{formatTime(c.time)}</td>
+                                        <td className="pr-4 py-1 text-gray-600">{c.format || "—"}</td>
+                                        <td className="pr-4 py-1 text-right text-gray-600">{c.quantity}</td>
+                                        <td className="pr-4 py-1 text-right text-gray-600">{c.m2.toFixed(2)}</td>
+                                        <td className="pr-4 py-1 text-right">
+                                          {c.gapMinutes !== null ? (
+                                            <span className={c.isIdle ? "text-orange-600 font-medium" : "text-gray-500"}>
+                                              {c.gapMinutes < 1 ? "<1m" : formatMinutes(c.gapMinutes)}
+                                            </span>
+                                          ) : (
+                                            <span className="text-gray-300">—</span>
+                                          )}
+                                        </td>
+                                        <td className="pr-4 py-1 text-center">
+                                          {c.isIdle ? (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                                              pauze
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                              actief
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {activeTab === "idle" && (
+        <div className="space-y-6">
+          {/* Pauzetijd per dag grafiek */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Pauzetijd per Dag (minuten)</h2>
+            {dailyChartData.length > 0 ? (
+              <div>
+                <div className="h-48 flex items-end gap-1 border-b border-l border-gray-200 pl-1 pb-1">
+                  {dailyChartData.map((day, i) => {
+                    const maxIdle = Math.max(...dailyChartData.map(d => d.totalIdleMinutes), 30)
+                    const h = Math.max((day.totalIdleMinutes / maxIdle) * 100, day.totalIdleMinutes > 0 ? 2 : 0)
+                    return (
+                      <div key={i} className="flex-1 flex items-end justify-center min-w-0 group relative">
+                        <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
+                          <div className="font-medium">{formatDate(day.date)}</div>
+                          <div>{formatMinutes(day.totalIdleMinutes)} idle</div>
+                          <div>{day.idleCount} pauzes</div>
+                        </div>
+                        <div
+                          className="w-full bg-orange-400 rounded-t-sm transition-all"
+                          style={{ height: `${h}%` }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="flex gap-1 mt-1 pl-1">
+                  {dailyChartData.map((day, i) => (
+                    <div key={i} className="flex-1 text-center min-w-0">
+                      <span className="text-[10px] text-gray-400 truncate block">
+                        {dailyChartData.length <= 14
+                          ? formatDate(day.date)
+                          : i % Math.ceil(dailyChartData.length / 10) === 0
+                            ? formatDate(day.date)
+                            : ""
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
+            )}
+          </div>
+
+          {/* Actief vs Idle ratio per dag */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Actief vs Idle Verhouding per Dag</h2>
+            {dailyChartData.filter(d => d.totalActiveMinutes + d.totalIdleMinutes > 0).length > 0 ? (
+              <div className="space-y-3">
+                {dailyChartData
+                  .filter(d => d.totalActiveMinutes + d.totalIdleMinutes > 0)
+                  .map((day, i) => {
+                    const total = day.totalActiveMinutes + day.totalIdleMinutes
+                    const activePct = total > 0 ? (day.totalActiveMinutes / total) * 100 : 0
+                    return (
+                      <div key={i}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-gray-600">{formatDate(day.date)}</span>
+                          <span className="text-gray-500">
+                            {formatMinutes(day.totalActiveMinutes)} actief / {formatMinutes(day.totalIdleMinutes)} idle
+                            <span className="ml-2 font-medium text-blue-600">({Math.round(activePct)}% actief)</span>
+                          </span>
+                        </div>
+                        <div className="w-full h-5 bg-gray-100 rounded-full overflow-hidden flex">
+                          <div
+                            className="bg-blue-500 h-full transition-all"
+                            style={{ width: `${activePct}%` }}
+                          />
+                          <div
+                            className="bg-orange-400 h-full transition-all"
+                            style={{ width: `${100 - activePct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
+            )}
+          </div>
+
+          {/* Alle idle periodes */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Alle Pauzes (&gt;5 min)</h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Operator</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Van</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Tot</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Duur</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {filteredDays.flatMap(day =>
+                    day.idlePeriods.map((ip, i) => (
+                      <tr key={`${day.date}-${day.operatorId}-${i}`} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{formatDate(day.date)}</td>
+                        <td className="px-4 py-2 text-gray-600">{day.operatorName}</td>
+                        <td className="px-4 py-2 text-right font-mono text-gray-600">{formatTime(ip.from)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-gray-600">{formatTime(ip.to)}</td>
+                        <td className="px-4 py-2 text-right font-medium text-orange-600">{formatMinutes(ip.durationMinutes)}</td>
+                      </tr>
+                    ))
+                  )}
+                  {filteredDays.flatMap(d => d.idlePeriods).length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                        Geen pauzes gevonden in de geselecteerde periode
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Timeline bar component — visuele representatie van completions op een tijdlijn
+function TimelineBar({ completions }: { completions: Completion[] }) {
+  if (completions.length < 2) {
+    return (
+      <div className="text-xs text-gray-400 italic">Te weinig datapunten voor een timeline</div>
+    )
+  }
+
+  const firstMs = new Date(completions[0].time).getTime()
+  const lastMs = new Date(completions[completions.length - 1].time).getTime()
+  const spanMs = lastMs - firstMs
+
+  if (spanMs === 0) return null
+
+  return (
+    <div className="relative">
+      {/* Tijdlijn balk */}
+      <div className="relative h-10 bg-gray-100 rounded-lg overflow-hidden">
+        {completions.map((c, i) => {
+          if (i === 0) return null
+          const prevMs = new Date(completions[i - 1].time).getTime()
+          const curMs = new Date(c.time).getTime()
+          const left = ((prevMs - firstMs) / spanMs) * 100
+          const width = ((curMs - prevMs) / spanMs) * 100
+
+          return (
+            <div
+              key={i}
+              className={`absolute top-0 h-full ${c.isIdle ? "bg-orange-300" : "bg-blue-400"}`}
+              style={{ left: `${left}%`, width: `${Math.max(width, 0.3)}%` }}
+              title={`${formatTime(completions[i - 1].time)} - ${formatTime(c.time)} (${c.gapMinutes?.toFixed(1)}m)${c.isIdle ? " — PAUZE" : ""}`}
+            />
+          )
+        })}
+        {/* Completion points */}
+        {completions.map((c, i) => {
+          const ms = new Date(c.time).getTime()
+          const pos = ((ms - firstMs) / spanMs) * 100
+          return (
+            <div
+              key={`dot-${i}`}
+              className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white border-2 border-gray-700 z-10"
+              style={{ left: `calc(${pos}% - 4px)` }}
+              title={`${formatTime(c.time)} — ${c.format || "?"} × ${c.quantity}`}
+            />
+          )
+        })}
+      </div>
+      {/* Tijdlabels */}
+      <div className="flex justify-between mt-1 text-xs text-gray-500">
+        <span>{formatTime(completions[0].time)}</span>
+        <span>{formatTime(completions[completions.length - 1].time)}</span>
+      </div>
+      {/* Legenda */}
+      <div className="flex gap-4 mt-1 text-xs text-gray-500">
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-2 bg-blue-400 rounded-sm" /> actief
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-2 bg-orange-300 rounded-sm" /> pauze (&gt;5 min)
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-2 h-2 rounded-full border-2 border-gray-700 bg-white" /> completion
         </div>
       </div>
     </div>
