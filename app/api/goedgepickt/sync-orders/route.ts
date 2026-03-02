@@ -75,7 +75,18 @@ export async function POST(request: NextRequest) {
     console.log(`📅 Fetching orders created after ${createdAfterStr} (${resetMode ? "RESET" : "incremental"})`)
       
       // Stap 1: Haal eerste pagina op
-    const firstPageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page: 1 })
+    console.log(`🔗 Calling getOrders with: orderstatus=backorder, createdAfter=${createdAfterStr}, page=1`)
+    let firstPageOrders: any[]
+    try {
+      firstPageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page: 1 })
+      console.log(`📄 Eerste pagina: ${firstPageOrders.length} orders ontvangen`)
+    } catch (fetchErr: any) {
+      console.error(`❌ Fout bij ophalen eerste pagina:`, fetchErr)
+      return NextResponse.json({ 
+        error: `GoedGepickt API fout: ${fetchErr.message}`,
+        debug: { resetMode, deletedBefore: deletedCount, createdAfter: createdAfterStr }
+      }, { status: 500 })
+    }
     const paginationInfo = api.lastPaginationInfo
     const totalPages = paginationInfo?.lastPage || 1
     

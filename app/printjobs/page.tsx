@@ -320,12 +320,12 @@ export default function PrintJobsPage() {
       if (data.debug) {
         console.log("Debug info:", data.debug)
         message += `\n📊 ${data.debug.ordersFromApi} orders opgehaald van GoedGepickt`
+        message += `\n📅 Datum filter: vanaf ${data.debug.createdAfter}`
+        message += `\n📄 ${data.debug.totalPages} pagina('s), ${data.debug.actualBackorders} echte backorders`
         
         if (data.debug.ordersFromApi === 0) {
-          message += "\n\n⚠️ Geen backorder orders gevonden in GoedGepickt."
-          if (!data.debug.backorderRuleFound) {
-            message += "\n❌ Backorder condition rule niet gevonden!"
-          }
+          message += "\n\n⚠️ Geen orders gevonden. Mogelijk tijdelijk GoedGepickt API probleem."
+          message += "\nProbeer het opnieuw."
         }
       }
       
