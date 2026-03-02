@@ -312,14 +312,14 @@ export default function PrintDataPage() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Werkdagen</p>
-            <ChangeBadge current={totals.workDays} previous={prevTotals.workDays} />
+            <ChangeBadge current={totals.workDays} previous={prevTotals.workDays} label="dagen" />
           </div>
           <p className="text-2xl font-bold text-gray-900 mt-1">{totals.workDays}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Actieve Tijd</p>
-            <ChangeBadge current={totals.totalActiveMinutes} previous={prevTotals.totalActiveMinutes} />
+            <ChangeBadge current={totals.totalActiveMinutes} previous={prevTotals.totalActiveMinutes} label="min actief" />
           </div>
           <p className="text-2xl font-bold text-blue-600 mt-1">{formatMinutes(totals.totalActiveMinutes)}</p>
           <p className="text-xs text-gray-400">tussen completions</p>
@@ -327,7 +327,7 @@ export default function PrintDataPage() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Idle Tijd</p>
-            <ChangeBadge current={totals.totalIdleMinutes} previous={prevTotals.totalIdleMinutes} invertColor />
+            <ChangeBadge current={totals.totalIdleMinutes} previous={prevTotals.totalIdleMinutes} invertColor label="min idle" />
           </div>
           <p className="text-2xl font-bold text-orange-500 mt-1">{formatMinutes(totals.totalIdleMinutes)}</p>
           <p className="text-xs text-gray-400">{totals.idleCount} pauzes (&gt;5 min)</p>
@@ -335,7 +335,7 @@ export default function PrintDataPage() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Jobs Voltooid</p>
-            <ChangeBadge current={totals.jobCount} previous={prevTotals.jobCount} />
+            <ChangeBadge current={totals.jobCount} previous={prevTotals.jobCount} label="jobs" />
           </div>
           <p className="text-2xl font-bold text-green-600 mt-1">{totals.jobCount}</p>
           <p className="text-xs text-gray-400">{totals.totalQuantity} stuks</p>
@@ -343,14 +343,14 @@ export default function PrintDataPage() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">M² Geprint</p>
-            <ChangeBadge current={totals.totalM2} previous={prevTotals.totalM2} />
+            <ChangeBadge current={totals.totalM2} previous={prevTotals.totalM2} label="m²" />
           </div>
           <p className="text-2xl font-bold text-indigo-600 mt-1">{totals.totalM2.toFixed(2)}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Gesch. Printtijd</p>
-            <ChangeBadge current={totals.estimatedPrintMinutes} previous={prevTotals.estimatedPrintMinutes} />
+            <ChangeBadge current={totals.estimatedPrintMinutes} previous={prevTotals.estimatedPrintMinutes} label="min" />
           </div>
           <p className="text-2xl font-bold text-purple-600 mt-1">{formatMinutes(totals.estimatedPrintMinutes)}</p>
         </div>

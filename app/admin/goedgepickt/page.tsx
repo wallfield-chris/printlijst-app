@@ -456,7 +456,7 @@ export default function GoedgepicktPage() {
             <div>
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium text-gray-600">Zendingen</p>
-                <ChangeBadge current={stats.shipments.total} previous={stats.previousPeriod.shipments} />
+                <ChangeBadge current={stats.shipments.total} previous={stats.previousPeriod.shipments} label="zendingen" />
               </div>
               <p className="text-3xl font-bold text-green-600">{stats.shipments.total}</p>
               <p className="text-xs text-gray-400 mt-1">totaal in {stats.periodLabel}</p>
@@ -475,7 +475,7 @@ export default function GoedgepicktPage() {
             <div>
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium text-gray-600">Gem. per Dag</p>
-                <ChangeBadge current={stats.shipments.avgPerDay} previous={stats.previousPeriod.avgPerDay} />
+                <ChangeBadge current={stats.shipments.avgPerDay} previous={stats.previousPeriod.avgPerDay} label="per dag" />
               </div>
               <p className="text-3xl font-bold text-indigo-600">
                 {stats.shipments.avgPerDay}
@@ -516,7 +516,7 @@ export default function GoedgepicktPage() {
             <div>
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium text-gray-600">Orders Afgerond</p>
-                <ChangeBadge current={stats.completedOrders.totalPeriod} previous={stats.previousPeriod.completedOrders} />
+                <ChangeBadge current={stats.completedOrders.totalPeriod} previous={stats.previousPeriod.completedOrders} label="orders" />
               </div>
               <p className="text-3xl font-bold text-purple-600">{stats.completedOrders.totalPeriod}</p>
               <p className="text-xs text-gray-400 mt-1">
@@ -542,7 +542,7 @@ export default function GoedgepicktPage() {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-600">Zendingen / Uur</p>
                   {stats.previousPeriod.shipmentsPerHour != null && (
-                    <ChangeBadge current={shiftbase.shipmentsPerHour || 0} previous={stats.previousPeriod.shipmentsPerHour} />
+                    <ChangeBadge current={shiftbase.shipmentsPerHour || 0} previous={stats.previousPeriod.shipmentsPerHour} label="zend/uur" />
                   )}
                 </div>
                 <p className="text-3xl font-bold text-orange-600">
@@ -568,7 +568,7 @@ export default function GoedgepicktPage() {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-600">Inpak Uren ({stats.periodLabel})</p>
                   {stats.previousPeriod.totalHours != null && (
-                    <ChangeBadge current={shiftbase.totalHours || 0} previous={stats.previousPeriod.totalHours} />
+                    <ChangeBadge current={shiftbase.totalHours || 0} previous={stats.previousPeriod.totalHours} label="uur" />
                   )}
                 </div>
                 <p className="text-3xl font-bold text-amber-600">
@@ -594,7 +594,7 @@ export default function GoedgepicktPage() {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-600">Kosten Inpak ({stats.periodLabel})</p>
                   {stats.previousPeriod.totalCost != null && (
-                    <ChangeBadge current={shiftbase.totalCost || 0} previous={stats.previousPeriod.totalCost} invertColor />
+                    <ChangeBadge current={shiftbase.totalCost || 0} previous={stats.previousPeriod.totalCost} invertColor label="€" formatValue={(v) => `€${v.toLocaleString("nl-NL", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`} />
                   )}
                 </div>
                 <p className="text-3xl font-bold text-red-600">
@@ -620,7 +620,7 @@ export default function GoedgepicktPage() {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-600">Kosten/Zending</p>
                   {stats.previousPeriod.costPerShipment != null && (
-                    <ChangeBadge current={shiftbase.costPerShipment || 0} previous={stats.previousPeriod.costPerShipment} invertColor />
+                    <ChangeBadge current={shiftbase.costPerShipment || 0} previous={stats.previousPeriod.costPerShipment} invertColor label="€/zending" formatValue={(v) => `€${v.toFixed(2)}`} />
                   )}
                 </div>
                 <p className="text-3xl font-bold text-rose-600">

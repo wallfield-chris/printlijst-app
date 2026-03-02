@@ -266,7 +266,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">Jobs Voltooid</p>
-            {prevData && <ChangeBadge current={periodData?.jobCount || 0} previous={prevData.jobCount} />}
+            {prevData && <ChangeBadge current={periodData?.jobCount || 0} previous={prevData.jobCount} label="jobs" />}
           </div>
           <p className="text-3xl font-bold text-green-600">{periodData?.jobCount || 0}</p>
           <p className="text-xs text-gray-400 mt-1">{periodData?.totalQuantity || 0} stuks</p>
@@ -275,7 +275,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">M² Geprint</p>
-            {prevData && <ChangeBadge current={periodData?.totalM2 || 0} previous={prevData.totalM2} />}
+            {prevData && <ChangeBadge current={periodData?.totalM2 || 0} previous={prevData.totalM2} label="m²" />}
           </div>
           <p className="text-3xl font-bold text-indigo-600">{periodData?.totalM2 || 0}</p>
           <p className="text-xs text-gray-400 mt-1">vierkante meter</p>
@@ -284,7 +284,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">Geschatte Printtijd</p>
-            {prevData && <ChangeBadge current={periodData?.totalPrintMinutes || 0} previous={prevData.totalPrintMinutes} />}
+            {prevData && <ChangeBadge current={periodData?.totalPrintMinutes || 0} previous={prevData.totalPrintMinutes} label="min" />}
           </div>
           <p className="text-3xl font-bold text-purple-600">{formatMinutes(periodData?.totalPrintMinutes || 0)}</p>
           <p className="text-xs text-gray-400 mt-1">op basis van formaten</p>
@@ -293,7 +293,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">M²/uur</p>
-            {prevData && <ChangeBadge current={periodData?.m2PerHour || 0} previous={prevData.m2PerHour} />}
+            {prevData && <ChangeBadge current={periodData?.m2PerHour || 0} previous={prevData.m2PerHour} label="m²/uur" />}
           </div>
           <p className="text-3xl font-bold text-teal-600">{periodData?.m2PerHour || 0}</p>
           <p className="text-xs text-gray-400 mt-1">gemiddelde doorvoer</p>
@@ -302,7 +302,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">Gem. Verwerkingstijd</p>
-            {prevData && <ChangeBadge current={periodData?.avgProcessingMs || 0} previous={prevData.avgProcessingMs} invertColor />}
+            {prevData && <ChangeBadge current={periodData?.avgProcessingMs || 0} previous={prevData.avgProcessingMs} invertColor label="ms" />}
           </div>
           <p className="text-3xl font-bold text-orange-600">{formatTime(periodData?.avgProcessingMs || 0)}</p>
           <p className="text-xs text-gray-400 mt-1">start → klaar per job</p>
@@ -312,7 +312,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-gray-600">Werktijd (Shiftbase)</p>
             {prevData?.shiftbaseHours != null && periodData?.shiftbaseHours != null && (
-              <ChangeBadge current={periodData.shiftbaseHours} previous={prevData.shiftbaseHours} />
+              <ChangeBadge current={periodData.shiftbaseHours} previous={prevData.shiftbaseHours} label="uur" />
             )}
           </div>
           {periodData?.shiftbaseHours != null ? (

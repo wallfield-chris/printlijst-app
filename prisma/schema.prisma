@@ -21,6 +21,7 @@ model User {
 
   sessions  Session[]
   printJobs PrintJob[] @relation("CompletedBy")
+  logbookEntries LogbookEntry[] @relation("LogbookEntries")
 }
 
 model Session {
@@ -185,6 +186,22 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// ============================================================
+// Logboek — dagelijkse notities van admins
+// ============================================================
+model LogbookEntry {
+  id        String   @id @default(cuid())
+  content   String   // De notitie tekst
+  mood      String   @default("neutral") // "good", "neutral", "bad"
+  authorId  String
+  author    User     @relation("LogbookEntries", fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([authorId])
 }
 
 // ============================================================
