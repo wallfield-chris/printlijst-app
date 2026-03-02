@@ -53,11 +53,12 @@ export async function GET() {
       },
     })
 
-    // Maak standaard instellingen aan
+    // Maak standaard instellingen aan met API keys uit environment variables
     const defaultSettings = [
-      { key: "goedgepickt_api_key", value: "" },
-      { key: "goedgepickt_webshop_uuid", value: "" },
-      { key: "shiftbase_api_key", value: "" },
+      { key: "goedgepickt_api_key", value: process.env.GOEDGEPICKT_API_KEY || "" },
+      { key: "goedgepickt_webshop_uuid", value: process.env.GOEDGEPICKT_WEBSHOP_UUID || "" },
+      { key: "shiftbase_api_key", value: process.env.SHIFTBASE_API_KEY || "" },
+      { key: "webhook_debug_mode", value: "true" },
     ]
 
     for (const setting of defaultSettings) {
@@ -70,12 +71,16 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      message: "Setup voltooid! Gebruikers aangemaakt.",
+      message: "Setup voltooid! Gebruikers en instellingen aangemaakt.",
       users: [
         { email: admin.email, role: admin.role, password: "admin123" },
         { email: employee1.email, role: employee1.role, password: "werknemer123" },
         { email: employee2.email, role: employee2.role, password: "werknemer123" },
       ],
+      settings: defaultSettings.map(s => ({
+        key: s.key,
+        configured: s.value !== "",
+      })),
       note: "Dit endpoint werkt nu niet meer (er bestaan gebruikers). Wijzig de wachtwoorden na eerste login!",
     })
   } catch (error) {
