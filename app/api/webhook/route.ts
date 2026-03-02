@@ -456,18 +456,19 @@ export async function POST(request: NextRequest) {
       webhookLogger.log(orderUuid, orderStatus || undefined, body)
     }
 
-    // Definitieve statussen: printjobs moeten worden verwijderd
-    const COMPLETED_STATUSES = ['completed', 'cancelled', 'shipped']
-    const isCompletedOrder = orderStatus ? COMPLETED_STATUSES.includes(orderStatus) : false
+    // Alleen orders met status 'backorder' mogen printjobs hebben
+    // Alles anders (in de wacht, afgerond, geannuleerd, verzonden, etc.) = verwijderen/blokkeren
+    const isBackorderOrder = orderStatus === 'backorder'
+    const isNonBackorderOrder = orderStatus && !isBackorderOrder
 
     // Check of we bestaande printjobs moeten updaten met nieuwe order status
     if (existingJobs.length > 0) {
       console.log(`📋 Order ${orderUuid} bestaat al met ${existingJobs.length} printjobs`)
       let updatedJobs = 0
 
-      // Als order afgerond of geannuleerd is: verwijder alle printjobs direct
-      if (isCompletedOrder) {
-        console.log(`🗑️  Order ${orderUuid} is '${orderStatus}' → alle printjobs worden verwijderd`)
+      // Als order NIET meer backorder is: verwijder alle printjobs direct
+      if (isNonBackorderOrder) {
+        console.log(`🗑️  Order ${orderUuid} is '${orderStatus}' (niet backorder) → alle printjobs worden verwijderd`)
         await prisma.printJob.deleteMany({
           where: { orderUuid },
         })
@@ -554,12 +555,12 @@ export async function POST(request: NextRequest) {
       }, { status: 200 })
     }
 
-    // Blokkeer nieuwe printjobs voor afgeronde/geannuleerde orders
-    if (isCompletedOrder) {
-      console.log(`🚫 Order ${orderUuid} heeft status '${orderStatus}' → geen printjobs aangemaakt`)
+    // Blokkeer nieuwe printjobs voor orders die niet backorder zijn
+    if (isNonBackorderOrder) {
+      console.log(`🚫 Order ${orderUuid} heeft status '${orderStatus}' (niet backorder) → geen printjobs aangemaakt`)
       return NextResponse.json({
         success: true,
-        message: `Order is '${orderStatus}': geen printjobs aangemaakt`,
+        message: `Order is '${orderStatus}' (niet backorder): geen printjobs aangemaakt`,
         skipped: true,
         orderStatus,
         event: webhookEvent,
