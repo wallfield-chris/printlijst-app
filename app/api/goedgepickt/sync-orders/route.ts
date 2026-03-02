@@ -165,20 +165,24 @@ export async function POST(request: NextRequest) {
       let matchingOrders: typeof orders = orders
       debugInfo.matchingOrders = matchingOrders.length
 
+      // Bouw een set van bestaande orderUuid+productUuid combinaties voor snelle lookup
+      const existingJobKeys = new Set<string>()
+      const allExistingJobs = await prisma.printJob.findMany({
+        where: { printStatus: { in: ["pending", "in_progress"] } },
+        select: { orderUuid: true, productUuid: true, sku: true },
+      })
+      for (const job of allExistingJobs) {
+        if (job.orderUuid && job.productUuid) {
+          existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
+        }
+        if (job.orderUuid && job.sku) {
+          existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+        }
+      }
+      debugInfo.existingActiveJobs = allExistingJobs.length
+
       for (const order of matchingOrders) {
         try {
-          // Check of order al geïmporteerd is
-          const existingJobs = await prisma.printJob.findMany({
-            where: { orderUuid: order.uuid },
-          })
-
-          if (existingJobs.length > 0) {
-            console.log(`⏭️  Order ${order.orderNumber || order.uuid} already imported (${existingJobs.length} jobs)`)
-            totalDuplicates++
-            debugInfo.duplicateOrders++
-            continue
-          }
-
           let orderHasProducts = false
 
           // Verwerk elk product in de order
@@ -187,6 +191,15 @@ export async function POST(request: NextRequest) {
               // Skip parent products
               if (product.type === "parent") {
                 console.log(`   ⏭️  Skipping parent product in order ${order.orderNumber}`)
+                continue
+              }
+
+              // Check of dit specifieke product al geïmporteerd is (orderUuid + productUuid/sku)
+              const dupKeyProduct = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
+              const dupKeySku = product.sku ? `${order.uuid}::sku::${product.sku}` : null
+              if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku))) {
+                console.log(`⏭️  Duplicate: ${product.sku || product.productUuid} in order ${order.orderNumber || order.uuid}`)
+                totalDuplicates++
                 continue
               }
 
@@ -371,6 +384,10 @@ export async function POST(request: NextRequest) {
 
               createdJobs.push(printJob)
               totalImported++
+
+              // Registreer in lookup set zodat volgende sync-calls geen duplicaten maken
+              if (dupKeyProduct) existingJobKeys.add(dupKeyProduct)
+              if (dupKeySku) existingJobKeys.add(dupKeySku)
             }
           }
         } catch (error: any) {

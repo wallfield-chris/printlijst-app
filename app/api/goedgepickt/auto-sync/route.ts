@@ -78,24 +78,26 @@ export async function GET(request: NextRequest) {
     // Filter op echte backorder status
     const backorderOrders = orders.filter((o) => o.status === "backorder")
 
+    // Bouw een set van bestaande orderUuid+productUuid/sku combinaties
+    const existingJobKeys = new Set<string>()
+    const existingJobs = await prisma.printJob.findMany({
+      where: { printStatus: { in: ["pending", "in_progress"] } },
+      select: { orderUuid: true, productUuid: true, sku: true },
+    })
+    for (const job of existingJobs) {
+      if (job.orderUuid && job.productUuid) {
+        existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
+      }
+      if (job.orderUuid && job.sku) {
+        existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+      }
+    }
+
     let imported = 0
     let skipped = 0
 
     for (const order of backorderOrders) {
       if (!order.uuid) continue
-
-      // Check of order al bestaat
-      const existing = await prisma.printJob.findFirst({
-        where: { orderUuid: order.uuid },
-        select: { id: true },
-      })
-
-      if (existing) {
-        skipped++
-        continue
-      }
-
-      // Nieuwe order — importeer alle producten
       if (!order.products || order.products.length === 0) continue
 
       // Verzamel alle SKU's voor order-brede tag matching
@@ -109,6 +111,14 @@ export async function GET(request: NextRequest) {
 
         // Skip al gepickte producten
         if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
+          continue
+        }
+
+        // Check of dit specifieke product al geïmporteerd is
+        const dupKeyProduct = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
+        const dupKeySku = product.sku ? `${order.uuid}::sku::${product.sku}` : null
+        if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku))) {
+          skipped++
           continue
         }
 
@@ -232,6 +242,10 @@ export async function GET(request: NextRequest) {
         })
 
         imported++
+
+        // Registreer in lookup set
+        if (dupKeyProduct) existingJobKeys.add(dupKeyProduct)
+        if (dupKeySku) existingJobKeys.add(dupKeySku)
       }
     }
 
