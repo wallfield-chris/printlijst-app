@@ -3,7 +3,7 @@
 import { useSession, signOut } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import bwipjs from "bwip-js"
 
 interface PrintJob {
@@ -59,8 +59,40 @@ export default function PrintJobsPage() {
   const [isLive, setIsLive] = useState(false)
   const [newOrderFlash, setNewOrderFlash] = useState(false)
   const pollRef = useRef<string | null>(null)
-  const backfileCanvasRef = useRef<HTMLCanvasElement>(null)
-  const skuCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Callback refs — tekenen de barcode zodra het canvas element mount
+  const backfileCanvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (!canvas || !selectedJob?.backfile) return
+    try {
+      bwipjs.toCanvas(canvas, {
+        bcid: 'code128',
+        text: selectedJob.backfile,
+        scale: 2,
+        height: 8,
+        includetext: true,
+        textxalign: 'center',
+      })
+    } catch (err) {
+      console.error('Error generating backfile barcode:', err)
+    }
+  }, [selectedJob?.backfile])
+
+  const skuCanvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (!canvas || !selectedJob?.sku) return
+    try {
+      const skuWithRtl = `${selectedJob.sku}.rtl`
+      bwipjs.toCanvas(canvas, {
+        bcid: 'code128',
+        text: skuWithRtl,
+        scale: 2,
+        height: 8,
+        includetext: true,
+        textxalign: 'center',
+      })
+    } catch (err) {
+      console.error('Error generating SKU barcode:', err)
+    }
+  }, [selectedJob?.sku])
 
   useEffect(() => {
     if (status === "loading") return
@@ -151,41 +183,6 @@ export default function PrintJobsPage() {
       clearInterval(syncInterval)
     }
   }, [session])
-
-  // Genereer barcodes voor het geselecteerde job
-  // Moet ook opnieuw draaien als activeTab verandert, omdat de canvas opnieuw gemount kan worden
-  useEffect(() => {
-    if (selectedJob?.backfile && backfileCanvasRef.current) {
-      try {
-        bwipjs.toCanvas(backfileCanvasRef.current, {
-          bcid: 'code128',
-          text: selectedJob.backfile,
-          scale: 2,
-          height: 8,
-          includetext: true,
-          textxalign: 'center',
-        })
-      } catch (err) {
-        console.error('Error generating backfile barcode:', err)
-      }
-    }
-
-    if (selectedJob?.sku && skuCanvasRef.current) {
-      try {
-        const skuWithRtl = `${selectedJob.sku}.rtl`
-        bwipjs.toCanvas(skuCanvasRef.current, {
-          bcid: 'code128',
-          text: skuWithRtl,
-          scale: 2,
-          height: 8,
-          includetext: true,
-          textxalign: 'center',
-        })
-      } catch (err) {
-        console.error('Error generating SKU barcode:', err)
-      }
-    }
-  }, [selectedJob, activeTab])
 
   // Haal afbeelding op als die nog niet in de DB staat
   useEffect(() => {
