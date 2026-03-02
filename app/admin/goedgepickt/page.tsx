@@ -86,12 +86,15 @@ interface GGStats {
 }
 
 const PERIOD_OPTIONS = [
+  { value: "today", label: "Vandaag" },
+  { value: "yesterday", label: "Gisteren" },
   { value: "7d", label: "7 dagen" },
   { value: "14d", label: "14 dagen" },
   { value: "30d", label: "30 dagen" },
   { value: "90d", label: "90 dagen" },
   { value: "this_month", label: "Deze maand" },
   { value: "last_month", label: "Vorige maand" },
+  { value: "custom", label: "Custom" },
 ]
 
 export default function GoedgepicktPage() {
@@ -100,6 +103,8 @@ export default function GoedgepicktPage() {
   const [error, setError] = useState("")
   const [tooltipDay, setTooltipDay] = useState<DailyData | null>(null)
   const [period, setPeriod] = useState("14d")
+  const [customStartDate, setCustomStartDate] = useState("")
+  const [customEndDate, setCustomEndDate] = useState("")
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState("")
   const [needsSync, setNeedsSync] = useState(false)
@@ -107,13 +112,22 @@ export default function GoedgepicktPage() {
   const [syncError, setSyncError] = useState("")
 
   useEffect(() => {
-    fetchStats()
-  }, [period])
+    if (period === "custom") {
+      // Only fetch when both dates are set
+      if (customStartDate && customEndDate) fetchStats()
+    } else {
+      fetchStats()
+    }
+  }, [period, customStartDate, customEndDate])
 
   const fetchStats = async () => {
     try {
       setLoading(true)
       const params = new URLSearchParams({ period })
+      if (period === "custom" && customStartDate && customEndDate) {
+        params.set("startDate", customStartDate)
+        params.set("endDate", customEndDate)
+      }
       const res = await fetch(`/api/admin/goedgepickt?${params}`)
       if (!res.ok) {
         const data = await res.json()
@@ -426,25 +440,48 @@ export default function GoedgepicktPage() {
       <SyncProgressPanel />
 
       {/* Periode selector */}
-      <div className="mb-6 flex items-center gap-2">
-        <span className="text-sm font-medium text-gray-500">Periode:</span>
-        <div className="inline-flex rounded-lg border border-gray-200 bg-white shadow-sm">
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setPeriod(opt.value)}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors first:rounded-l-lg last:rounded-r-lg ${
-                period === opt.value
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-600 hover:bg-gray-50"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium text-gray-500">Periode:</span>
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white shadow-sm flex-wrap">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setPeriod(opt.value)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors first:rounded-l-lg last:rounded-r-lg ${
+                  period === opt.value
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {loading && (
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent ml-2"></div>
+          )}
         </div>
-        {loading && (
-          <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent ml-2"></div>
+        {period === "custom" && (
+          <div className="mt-3 flex items-center gap-3">
+            <label className="text-sm text-gray-500">Van:</label>
+            <input
+              type="date"
+              value={customStartDate}
+              onChange={(e) => setCustomStartDate(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <label className="text-sm text-gray-500">Tot:</label>
+            <input
+              type="date"
+              value={customEndDate}
+              onChange={(e) => setCustomEndDate(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            {customStartDate && customEndDate && customStartDate > customEndDate && (
+              <span className="text-sm text-red-500">Startdatum moet voor einddatum liggen</span>
+            )}
+          </div>
         )}
       </div>
 

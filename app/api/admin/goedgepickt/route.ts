@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma"
 
 const COST_PER_HOUR = 17 // €17 gemiddeld per uur
 
-const VALID_PERIODS = ["7d", "14d", "30d", "90d", "this_month", "last_month"] as const
+const VALID_PERIODS = ["today", "yesterday", "7d", "14d", "30d", "90d", "this_month", "last_month", "custom"] as const
 type Period = (typeof VALID_PERIODS)[number]
 
 function toDateStr(d: Date): string {
@@ -18,10 +18,17 @@ function toDateStr(d: Date): string {
 }
 
 /** Bereken start- en einddatum voor een periode */
-function getPeriodDates(period: Period, now: Date): { startDate: string; endDate: string; label: string; days: number } {
+function getPeriodDates(period: Period, now: Date, customStart?: string, customEnd?: string): { startDate: string; endDate: string; label: string; days: number } {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
   switch (period) {
+    case "today": {
+      return { startDate: toDateStr(today), endDate: toDateStr(today), label: "vandaag", days: 1 }
+    }
+    case "yesterday": {
+      const yday = new Date(today); yday.setDate(yday.getDate() - 1)
+      return { startDate: toDateStr(yday), endDate: toDateStr(yday), label: "gisteren", days: 1 }
+    }
     case "7d": {
       const start = new Date(today); start.setDate(start.getDate() - 7)
       return { startDate: toDateStr(start), endDate: toDateStr(today), label: "7 dagen", days: 7 }
@@ -48,6 +55,19 @@ function getPeriodDates(period: Period, now: Date): { startDate: string; endDate
       const end = new Date(today.getFullYear(), today.getMonth(), 0)
       const daysInMonth = end.getDate()
       return { startDate: toDateStr(start), endDate: toDateStr(end), label: "vorige maand", days: daysInMonth }
+    }
+    case "custom": {
+      if (!customStart || !customEnd) {
+        // Fallback to 14d if custom dates missing
+        const start = new Date(today); start.setDate(start.getDate() - 14)
+        return { startDate: toDateStr(start), endDate: toDateStr(today), label: "14 dagen", days: 14 }
+      }
+      const s = new Date(customStart + "T00:00:00")
+      const e = new Date(customEnd + "T00:00:00")
+      const diffMs = e.getTime() - s.getTime()
+      const days = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1)
+      const label = `${customStart.slice(8)}/${customStart.slice(5,7)} – ${customEnd.slice(8)}/${customEnd.slice(5,7)}`
+      return { startDate: customStart, endDate: customEnd, label, days }
     }
   }
 }
@@ -188,10 +208,12 @@ export async function GET(request: NextRequest) {
     }
 
     const periodParam = request.nextUrl.searchParams.get("period") || "14d"
+    const customStart = request.nextUrl.searchParams.get("startDate") || undefined
+    const customEnd = request.nextUrl.searchParams.get("endDate") || undefined
     const period: Period = VALID_PERIODS.includes(periodParam as Period) ? (periodParam as Period) : "14d"
 
     const now = new Date()
-    const { startDate: periodStartStr, endDate: periodEndStr, label: periodLabel, days: periodDays } = getPeriodDates(period, now)
+    const { startDate: periodStartStr, endDate: periodEndStr, label: periodLabel, days: periodDays } = getPeriodDates(period, now, customStart, customEnd)
 
     // Vorige periode (zelfde lengte, direct ervoor)
     const periodStart = new Date(periodStartStr + "T00:00:00")
