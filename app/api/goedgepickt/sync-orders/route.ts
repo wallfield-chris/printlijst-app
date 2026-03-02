@@ -9,57 +9,124 @@ import { GoedGepicktAPI } from "@/lib/goedgepickt"
  * 
  * Body params:
  *  - reset: boolean  (optioneel) — verwijdert alle pending printjobs voor een schone sync
+ * 
+ * Query params:
+ *  - stream: "true" — gebruik SSE streaming voor real-time voortgang
  */
 export async function POST(request: NextRequest) {
+  const url = new URL(request.url)
+  const useStream = url.searchParams.get("stream") === "true"
+
+  // Parse body VOOR de stream (body kan maar 1x gelezen worden)
+  let resetMode = false
+  try {
+    const body = await request.json()
+    resetMode = body?.reset === true
+  } catch {
+    // Geen body = gewone sync
+  }
+
+  if (useStream) {
+    return handleStreamingSync(request, resetMode)
+  }
+
+  return handleJsonSync(request, resetMode)
+}
+
+async function handleStreamingSync(request: NextRequest, resetMode: boolean) {
+  const session = await auth()
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: Record<string, any>) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+        } catch { /* stream closed */ }
+      }
+
+      try {
+        await runSyncLogic(resetMode, send)
+      } catch (error) {
+        send({ type: "error", message: `Fout: ${error instanceof Error ? error.message : String(error)}` })
+      } finally {
+        controller.close()
+      }
+    }
+  })
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  })
+}
+
+async function handleJsonSync(request: NextRequest, resetMode: boolean) {
   try {
     const session = await auth()
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Parse optionele body
-    let resetMode = false
-    try {
-      const body = await request.json()
-      resetMode = body?.reset === true
-    } catch {
-      // Geen body = gewone sync
+    const result = await runSyncLogic(resetMode) as any
+    if (result.error) {
+      return NextResponse.json({ error: result.error, debug: result.debug }, { status: result.status || 500 })
     }
+    return NextResponse.json(result)
+  } catch (error: any) {
+    console.error("❌ Sync error:", error)
+    return NextResponse.json({ error: error.message || "Error syncing orders" }, { status: 500 })
+  }
+}
 
-    // === Setup: API key + rules ===
-    const apiKeySetting = await prisma.setting.findUnique({
-      where: { key: "goedgepickt_api_key" },
+type SendFn = (data: Record<string, any>) => void
+const noopSend: SendFn = () => {}
+
+async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
+  send({ type: "start", step: 0, totalSteps: 4, message: "Synchronisatie voorbereiden..." })
+
+  // === Setup: API key + rules ===
+  const apiKeySetting = await prisma.setting.findUnique({
+    where: { key: "goedgepickt_api_key" },
+  })
+  if (!apiKeySetting?.value) {
+    return { error: "GoedGepickt API key not configured", status: 400 }
+  }
+
+  const [conditionRules, tagRules, priorityRules, exclusionRules] = await Promise.all([
+    prisma.conditionRule.findMany({ where: { active: true } }),
+    prisma.tagRule.findMany({ where: { active: true } }),
+    prisma.priorityRule.findMany({ where: { active: true } }),
+    prisma.exclusionRule.findMany({ where: { active: true } }),
+  ])
+
+  if (conditionRules.length === 0) {
+    return { error: "No active condition rules found", status: 400 }
+  }
+
+  const backorderRule = conditionRules.find(
+    (r) => r.field === "orderStatus" && r.value === "backorder"
+  )
+  if (!backorderRule) {
+    return { error: "No backorder condition rule found", status: 400 }
+  }
+
+  // === Reset mode: verwijder alle pending jobs ===
+  let deletedCount = 0
+  if (resetMode) {
+    send({ type: "progress", step: 1, totalSteps: 4, message: "Bestaande jobs verwijderen..." })
+    const result = await prisma.printJob.deleteMany({
+      where: { printStatus: "pending" },
     })
-    if (!apiKeySetting?.value) {
-      return NextResponse.json({ error: "GoedGepickt API key not configured" }, { status: 400 })
-    }
-
-    const [conditionRules, tagRules, priorityRules, exclusionRules] = await Promise.all([
-      prisma.conditionRule.findMany({ where: { active: true } }),
-      prisma.tagRule.findMany({ where: { active: true } }),
-      prisma.priorityRule.findMany({ where: { active: true } }),
-      prisma.exclusionRule.findMany({ where: { active: true } }),
-    ])
-
-    if (conditionRules.length === 0) {
-      return NextResponse.json({ error: "No active condition rules found" }, { status: 400 })
-    }
-
-    const backorderRule = conditionRules.find(
-      (r) => r.field === "orderStatus" && r.value === "backorder"
-    )
-    if (!backorderRule) {
-      return NextResponse.json({ error: "No backorder condition rule found" }, { status: 400 })
-    }
-
-    // === Reset mode: verwijder alle pending jobs ===
-    let deletedCount = 0
-    if (resetMode) {
-      const result = await prisma.printJob.deleteMany({
-        where: { printStatus: "pending" },
-      })
       deletedCount = result.count
       console.log(`🗑️  Reset mode: ${deletedCount} pending printjobs verwijderd`)
+      send({ type: "progress", step: 1, totalSteps: 4, message: `${deletedCount} bestaande jobs verwijderd` })
     }
 
     // === Haal orders op uit GoedGepickt ===
@@ -74,7 +141,8 @@ export async function POST(request: NextRequest) {
     
     console.log(`📅 Fetching orders created after ${createdAfterStr} (${resetMode ? "RESET" : "incremental"})`)
       
-      // Stap 1: Haal eerste pagina op
+    // Stap 2: Haal eerste pagina op
+    send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: "Pagina 1 ophalen..." })
     console.log(`🔗 Calling getOrders with: orderstatus=backorder, createdAfter=${createdAfterStr}, page=1`)
     let firstPageOrders: any[]
     try {
@@ -82,23 +150,27 @@ export async function POST(request: NextRequest) {
       console.log(`📄 Eerste pagina: ${firstPageOrders.length} orders ontvangen`)
     } catch (fetchErr: any) {
       console.error(`❌ Fout bij ophalen eerste pagina:`, fetchErr)
-      return NextResponse.json({ 
+      send({ type: "error", message: `GoedGepickt API fout: ${fetchErr.message}` })
+      return { 
         error: `GoedGepickt API fout: ${fetchErr.message}`,
-        debug: { resetMode, deletedBefore: deletedCount, createdAfter: createdAfterStr }
-      }, { status: 500 })
+        debug: { resetMode, deletedBefore: deletedCount, createdAfter: createdAfterStr },
+        status: 500
+      }
     }
     const paginationInfo = api.lastPaginationInfo
     const totalPages = paginationInfo?.lastPage || 1
     
     console.log(`📊 Found ${paginationInfo?.totalItems || firstPageOrders.length} orders across ${totalPages} pages`)
+    send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: `Pagina 1 van ~${totalPages}` })
 
-    // Stap 2: Haal alle pagina's op
+    // Haal alle pagina's op
     const allOrders: any[] = []
     for (let page = totalPages; page >= 1; page--) {
       if (page === 1) {
         allOrders.push(...firstPageOrders)
         continue
       }
+      send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: `Pagina ${totalPages - page + 1} van ~${totalPages}` })
       try {
         const pageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page })
         if (pageOrders.length > 0) allOrders.push(...pageOrders)
@@ -110,6 +182,7 @@ export async function POST(request: NextRequest) {
     // Stap 3: Filter op echte backorder status
     const orders = allOrders.filter(o => o.status === "backorder")
     console.log(`🔍 ${allOrders.length} opgehaald, ${orders.length} zijn echte backorders`)
+    send({ type: "progress", step: 3, totalSteps: 4, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
 
     // === Dedup lookup: bestaande actieve jobs ===
     const existingJobKeys = new Set<string>()
@@ -146,7 +219,12 @@ export async function POST(request: NextRequest) {
     let totalPicked = 0
     const errors: { orderUuid: string; error: string }[] = []
 
-    for (const order of orders) {
+    for (let orderIdx = 0; orderIdx < orders.length; orderIdx++) {
+      const order = orders[orderIdx]
+      // Elke 5 orders een progress update
+      if (orderIdx % 5 === 0) {
+        send({ type: "progress", step: 3, totalSteps: 4, message: "Orders verwerken...", detail: `Order ${orderIdx + 1} van ${orders.length} (${totalImported} geïmporteerd)` })
+      }
       try {
         if (!order.products || order.products.length === 0) continue
 
@@ -284,7 +362,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked`)
 
-    return NextResponse.json({
+    const resultData = {
       success: true,
       message: `Sync complete: ${totalImported} jobs created`,
       stats: {
@@ -305,11 +383,11 @@ export async function POST(request: NextRequest) {
         productCacheSize: productCache.size,
       },
       errors: errors.length > 0 ? errors : undefined,
-    })
-  } catch (error: any) {
-    console.error("❌ Sync error:", error)
-    return NextResponse.json({ error: error.message || "Error syncing orders" }, { status: 500 })
-  }
+    }
+
+    send({ type: "done", step: 4, totalSteps: 4, message: `${totalImported} printjobs geïmporteerd`, result: resultData.stats })
+
+    return resultData
 }
 
 function checkCondition(fieldValue: string, condition: string, ruleValue: string): boolean {

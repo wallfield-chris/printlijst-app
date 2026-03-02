@@ -47,6 +47,8 @@ export default function PrintJobsPage() {
   const [selectedJob, setSelectedJob] = useState<PrintJob | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{ step: number; totalSteps: number; message: string; detail?: string } | null>(null)
+  const [refreshProgress, setRefreshProgress] = useState<{ step: number; totalSteps: number; message: string; detail?: string } | null>(null)
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null)
   // Push to Stock
   const [pushToStockOpen, setPushToStockOpen] = useState(false)
@@ -225,41 +227,90 @@ export default function PrintJobsPage() {
     }
   }
 
+  // SSE stream reader helper
+  const readSSEStream = async (
+    response: Response, 
+    setProgress: (p: { step: number; totalSteps: number; message: string; detail?: string } | null) => void
+  ): Promise<any> => {
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let result: any = null
+
+    if (!reader) throw new Error("Geen response stream")
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split("\n\n")
+      buffer = lines.pop() || ""
+
+      for (const line of lines) {
+        const dataLine = line.replace(/^data: /, "").trim()
+        if (!dataLine) continue
+        try {
+          const event = JSON.parse(dataLine)
+          if (event.type === "start" || event.type === "progress") {
+            setProgress({
+              step: event.step || 0,
+              totalSteps: event.totalSteps || 4,
+              message: event.message,
+              detail: event.detail,
+            })
+          } else if (event.type === "done") {
+            setProgress({ step: event.totalSteps, totalSteps: event.totalSteps, message: "✅ " + event.message })
+            result = event.result
+          } else if (event.type === "error") {
+            setProgress(null)
+            throw new Error(event.message)
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== "Geen response stream") throw e
+        }
+      }
+    }
+    return result
+  }
+
   const refreshWithStatusSync = async () => {
     if (refreshing) return
     try {
       setRefreshing(true)
       setError("")
 
-      // Stap 1: Sync statussen — verwijder orders die niet meer backorder zijn,
-      // al gepickt zijn, of weer op voorraad zijn
-      const statusResponse = await fetch("/api/printjobs/sync-statuses", {
+      // Stap 1: Sync statussen met streaming
+      setRefreshProgress({ step: 0, totalSteps: 3, message: "Statussen ophalen..." })
+      const statusResponse = await fetch("/api/printjobs/sync-statuses?stream=true", {
         method: "POST",
       })
-      if (statusResponse.ok) {
-        const statusData = await statusResponse.json()
-        if (statusData.deleted > 0 || statusData.updated > 0) {
-          console.log(`🔄 Status sync: ${statusData.deleted} verwijderd, ${statusData.updated} geüpdated`)
-        }
+      if (statusResponse.ok && statusResponse.body) {
+        await readSSEStream(statusResponse, (p) => {
+          if (p) setRefreshProgress({ ...p, totalSteps: 3 })
+        })
       }
 
-      // Stap 2: Haal eventuele nieuwe orders op (incrementeel, geen reset)
-      const syncResponse = await fetch("/api/goedgepickt/sync-orders", {
+      // Stap 2: Haal eventuele nieuwe orders op (incrementeel, geen reset) met streaming
+      setRefreshProgress({ step: 2, totalSteps: 3, message: "Nieuwe orders ophalen..." })
+      const syncResponse = await fetch("/api/goedgepickt/sync-orders?stream=true", {
         method: "POST",
       })
-      if (syncResponse.ok) {
-        const syncData = await syncResponse.json()
-        if (syncData.stats?.imported > 0) {
-          console.log(`📦 ${syncData.stats.imported} nieuwe orders geïmporteerd`)
-        }
+      if (syncResponse.ok && syncResponse.body) {
+        await readSSEStream(syncResponse, (p) => {
+          if (p) setRefreshProgress({ step: 2, totalSteps: 3, message: p.message, detail: p.detail })
+        })
       }
+
+      setRefreshProgress({ step: 3, totalSteps: 3, message: "✅ Vernieuwen voltooid" })
     } catch (err: any) {
       console.error("Sync fout:", err)
       setError("Kon orders niet synchroniseren uit GoedGepickt")
     } finally {
       setRefreshing(false)
+      await fetchPrintJobs()
+      setTimeout(() => setRefreshProgress(null), 3000)
     }
-    await fetchPrintJobs()
   }
 
   const fetchListViews = async () => {
@@ -284,64 +335,41 @@ export default function PrintJobsPage() {
     try {
       setSyncing(true)
       setError("")
+      setSyncProgress({ step: 0, totalSteps: 4, message: "Synchronisatie starten..." })
       
-      const response = await fetch("/api/goedgepickt/sync-orders", {
+      const response = await fetch("/api/goedgepickt/sync-orders?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset: true }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(data.error || "Fout bij ophalen van orders")
+        const errData = await response.json().catch(() => ({ error: "Onbekende fout" }))
+        throw new Error(errData.error || "Fout bij ophalen van orders")
       }
 
-      // Toon gedetailleerde feedback
-      let message = `✅ Sync compleet!\n\n`
-      
-      if (data.stats.deletedBefore > 0) {
-        message += `🗑️ ${data.stats.deletedBefore} oude jobs verwijderd\n`
-      }
-      
-      message += `📥 ${data.stats.imported} jobs geïmporteerd\n`
-      
-      if (data.stats.inStock > 0) {
-        message += `📦 ${data.stats.inStock} producten op voorraad (overgeslagen)\n`
-      }
-      
-      if (data.stats.picked > 0) {
-        message += `✅ ${data.stats.picked} producten al gepickt (overgeslagen)\n`
-      }
-      
-      if (data.stats.excluded > 0) {
-        message += `⛔ ${data.stats.excluded} producten geëxcludeerd door rules\n`
-      }
-      
-      if (data.debug) {
-        console.log("Debug info:", data.debug)
-        message += `\n📊 ${data.debug.ordersFromApi} orders opgehaald van GoedGepickt`
-        message += `\n📅 Datum filter: vanaf ${data.debug.createdAfter}`
-        message += `\n📄 ${data.debug.totalPages} pagina('s), ${data.debug.actualBackorders} echte backorders`
+      if (response.body) {
+        const result = await readSSEStream(response, setSyncProgress)
         
-        if (data.debug.ordersFromApi === 0) {
-          message += "\n\n⚠️ Geen orders gevonden. Mogelijk tijdelijk GoedGepickt API probleem."
-          message += "\nProbeer het opnieuw."
+        // Toon resultaat in progress panel (niet meer via alert)
+        if (result) {
+          const stats = result
+          let detail = `${stats.imported} geïmporteerd`
+          if (stats.inStock > 0) detail += `, ${stats.inStock} op voorraad`
+          if (stats.excluded > 0) detail += `, ${stats.excluded} geëxcludeerd`
+          if (stats.picked > 0) detail += `, ${stats.picked} al gepickt`
+          if (stats.deletedBefore > 0) detail += ` (${stats.deletedBefore} oude verwijderd)`
+          setSyncProgress({ step: 4, totalSteps: 4, message: `✅ Sync voltooid`, detail })
         }
       }
-      
-      if (data.stats.errors > 0) {
-        message += `\n⚠️ ${data.stats.errors} fouten`
-      }
 
-      alert(message)
       await fetchPrintJobs()
     } catch (err: any) {
       setError(err.message || "Kon orders niet ophalen uit GoedGepickt")
-      alert(`❌ Fout: ${err.message || "Kon orders niet ophalen uit GoedGepickt"}`)
       console.error(err)
     } finally {
       setSyncing(false)
+      setTimeout(() => setSyncProgress(null), 8000)
     }
   }
 
@@ -728,6 +756,84 @@ export default function PrintJobsPage() {
             )}
           </div>
         </div>
+
+        {/* Sync Progress Panel */}
+        {(syncProgress || refreshProgress) && (
+          <div className="mb-4 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div className="flex items-center gap-3 mb-3">
+              {(syncing || refreshing) ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+              ) : (
+                <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-white text-xs">✓</div>
+              )}
+              <h3 className="font-semibold text-gray-800 text-sm">
+                {syncing ? "Bezig met synchroniseren..." : refreshing ? "Bezig met vernieuwen..." : "Voltooid"}
+              </h3>
+            </div>
+
+            {(() => {
+              const progress = syncProgress || refreshProgress
+              if (!progress) return null
+              return (
+                <div>
+                  <div className="flex justify-between text-xs text-gray-600 mb-1">
+                    <span>{progress.message}</span>
+                    <span>Stap {progress.step}/{progress.totalSteps}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: `${Math.max(5, (progress.step / progress.totalSteps) * 100)}%` }}
+                    />
+                  </div>
+                  {progress.detail && (
+                    <p className="text-xs text-gray-500 mt-1">{progress.detail}</p>
+                  )}
+
+                  {/* Stappen overzicht voor Orders Ophalen */}
+                  {syncing && syncProgress && (
+                    <div className="grid grid-cols-4 gap-2 mt-3">
+                      {["Opschonen", "Orders ophalen", "Verwerken", "Opslaan"].map((label, i) => {
+                        const stepNum = i + 1
+                        const isDone = syncProgress.step > stepNum || (syncProgress.step === syncProgress.totalSteps && syncProgress.message.includes("✅"))
+                        const isActive = syncProgress.step === stepNum
+                        return (
+                          <div key={i} className={`text-center py-1.5 px-1 rounded text-xs font-medium ${
+                            isDone ? "bg-green-100 text-green-700" :
+                            isActive ? "bg-blue-100 text-blue-700 animate-pulse" :
+                            "bg-gray-100 text-gray-400"
+                          }`}>
+                            {isDone ? "✅" : isActive ? "⏳" : "○"} {label}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Stappen overzicht voor Vernieuwen */}
+                  {refreshing && refreshProgress && (
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      {["Statussen", "Nieuwe orders", "Afronden"].map((label, i) => {
+                        const stepNum = i + 1
+                        const isDone = refreshProgress.step > stepNum || (refreshProgress.step === refreshProgress.totalSteps && refreshProgress.message.includes("✅"))
+                        const isActive = refreshProgress.step === stepNum || (refreshProgress.step > i && refreshProgress.step <= stepNum)
+                        return (
+                          <div key={i} className={`text-center py-1.5 px-1 rounded text-xs font-medium ${
+                            isDone ? "bg-green-100 text-green-700" :
+                            isActive ? "bg-blue-100 text-blue-700 animate-pulse" :
+                            "bg-gray-100 text-gray-400"
+                          }`}>
+                            {isDone ? "✅" : isActive ? "⏳" : "○"} {label}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-md">
