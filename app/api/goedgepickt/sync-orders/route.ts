@@ -198,17 +198,45 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     }
 
     // === Product detail cache (voorkomt dubbele API calls) ===
+    // Alleen succesvolle resultaten cachen — null (rate limit/error) wordt NIET gecacht
     const productCache = new Map<string, any>()
-    async function getProductCached(productUuid: string) {
+    const API_DELAY_MS = 250 // delay tussen product API calls om rate limiting te voorkomen
+    
+    async function getProductCached(productUuid: string): Promise<any> {
       if (productCache.has(productUuid)) return productCache.get(productUuid)
-      try {
-        const details = await api.getProduct(productUuid)
-        productCache.set(productUuid, details)
-        return details
-      } catch {
-        productCache.set(productUuid, null)
-        return null
+      
+      // Retry logic: max 3 pogingen met toenemende delay
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          // Wacht even voor elke API call (rate limiting preventie)
+          if (attempt > 1) {
+            await new Promise(r => setTimeout(r, API_DELAY_MS * attempt * 2))
+          } else {
+            await new Promise(r => setTimeout(r, API_DELAY_MS))
+          }
+          
+          const details = await api.getProduct(productUuid)
+          if (details) {
+            productCache.set(productUuid, details)
+            return details
+          }
+          
+          // null terug = API error (404, rate limit, etc.)
+          if (attempt < 3) {
+            console.log(`⏳ Product ${productUuid} poging ${attempt} mislukt, retry...`)
+            continue
+          }
+        } catch (err) {
+          if (attempt < 3) {
+            console.log(`⏳ Product fetch error poging ${attempt}, retry...`)
+            continue
+          }
+        }
       }
+      
+      // Na 3 pogingen gefaald — NIET cachen zodat het later opnieuw geprobeerd kan worden
+      console.log(`❌ Product ${productUuid} niet opgehaald na 3 pogingen`)
+      return null
     }
 
     // === Verwerk orders ===
@@ -217,6 +245,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     let totalExcluded = 0
     let totalInStock = 0
     let totalPicked = 0
+    let totalStockUnverified = 0
     const errors: { orderUuid: string; error: string }[] = []
 
     for (let orderIdx = 0; orderIdx < orders.length; orderIdx++) {
@@ -259,9 +288,11 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
           }
 
           // === Stock check + product details (1 API call, gecached) ===
+          // BELANGRIJK: deze orders zijn AL gefilterd op orderstatus=backorder
+          // We skippen ALLEEN als we POSITIEF kunnen bevestigen dat het product op voorraad is
+          // Als stock check faalt → toch importeren (het IS een backorder order)
           let supplierSku: string | null = null
           let imageUrl: string | null = null
-          let stockVerified = false
           
           if (product.productUuid) {
             const details = await getProductCached(product.productUuid)
@@ -270,9 +301,14 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
               const freeStock = details.stock?.freeStock ?? (details as any).freeStock ?? null
               if (freeStock !== null && freeStock >= 0) {
                 totalInStock++
+                console.log(`📦 Op voorraad: ${product.sku || product.productName} (freeStock: ${freeStock})`)
                 continue
               }
-              stockVerified = freeStock !== null
+              
+              if (freeStock === null) {
+                totalStockUnverified++
+                console.log(`⚠️ Geen stock data voor ${product.sku || product.productName} → importeren (backorder order)`)
+              }
 
               // Supplier SKU
               supplierSku = details.supplier?.supplierSku || (details as any).supplierSku || null
@@ -281,19 +317,13 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
               if (details.picture && !details.picture.includes("image_placeholder")) {
                 imageUrl = details.picture
               }
+            } else {
+              // getProduct faalde na retries — importeer toch (order IS backorder)
+              totalStockUnverified++
+              console.log(`⚠️ Product details niet beschikbaar voor ${product.sku || product.productName} → importeren (backorder order)`)
             }
-            // Als getProduct faalt (null) of geen stock data:
-            // NIET importeren → veiligheid boven alles
-            if (!stockVerified) {
-              totalInStock++ // tel als "overgeslagen"
-              console.log(`⚠️ Stock niet te verifiëren voor ${product.sku || product.productName} → overgeslagen (veilig)`)
-              continue
-            }
-          } else {
-            // Geen productUuid = geen stock check mogelijk → skip
-            console.log(`⚠️ Geen productUuid voor ${product.sku || product.productName} → overgeslagen`)
-            continue
           }
+          // Geen productUuid → importeer ook (het is een backorder order)
 
           // === Tags ===
           const appliedTags: string[] = []
@@ -360,7 +390,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
       }
     }
 
-    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked`)
+    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked, ${totalStockUnverified} stock-onbekend`)
 
     const resultData = {
       success: true,
@@ -371,6 +401,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
         excluded: totalExcluded,
         inStock: totalInStock,
         picked: totalPicked,
+        stockUnverified: totalStockUnverified,
         errors: errors.length,
         ...(resetMode ? { deletedBefore: deletedCount } : {}),
       },

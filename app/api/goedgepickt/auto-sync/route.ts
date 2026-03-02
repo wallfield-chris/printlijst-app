@@ -138,10 +138,10 @@ export async function GET(request: NextRequest) {
         }
         if (isExcluded) continue
 
-        // Check stock — alleen importeren als freeStock < 0
+        // Check stock — alleen skippen als we POSITIEF bevestigen dat het op voorraad is
+        // Order is al gefilterd op orderstatus=backorder, dus bij twijfel → importeren
         let supplierSku: string | null = null
         let imageUrl: string | null = null
-        let stockVerified = false
 
         if (product.productUuid) {
           try {
@@ -149,7 +149,6 @@ export async function GET(request: NextRequest) {
             if (details) {
               const freeStock = details.stock?.freeStock ?? (details as any).freeStock ?? null
               if (freeStock !== null && freeStock >= 0) continue // Op voorraad → niet printen
-              stockVerified = freeStock !== null
 
               if (details.supplier?.supplierSku) supplierSku = details.supplier.supplierSku
               else if ((details as any).supplierSku) supplierSku = (details as any).supplierSku
@@ -158,15 +157,11 @@ export async function GET(request: NextRequest) {
                 imageUrl = details.picture
               }
             }
+            // details === null → API faalde, maar order IS backorder → importeren
           } catch {
-            // Stock check mislukt
+            // Stock check mislukt → order IS backorder → importeren
+            console.log(`⚠️ [auto-sync] Stock check mislukt voor ${product.sku || product.productName} → importeren (backorder)`)
           }
-        }
-
-        // NIET importeren als stock niet geverifieerd kan worden
-        if (!stockVerified) {
-          console.log(`⚠️ [auto-sync] Stock niet te verifiëren voor ${product.sku || product.productName} → overgeslagen`)
-          continue
         }
 
         // Tags

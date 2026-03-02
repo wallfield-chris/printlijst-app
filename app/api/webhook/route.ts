@@ -640,14 +640,13 @@ export async function POST(request: NextRequest) {
 
         // Check 2: freeStock >= 0 = voorraad aanwezig of gereserveerd → niet in backorder → niet printen
         // freeStock < 0 = écht in backorder (meer besteld dan er ooit is) → wel printen
-        // freeStock === null = stock niet te verifiëren → NIET printen (veiligheid boven alles)
-        if (freeStock === null) {
-          console.log(`   ⚠️ Stock niet te verifiëren, skip: ${product.sku || product.productName} (veilig)`)
-          continue
-        }
-        if (freeStock >= 0) {
+        // freeStock === null = stock niet te verifiëren → WEL printen (order is backorder, trust dat)
+        if (freeStock !== null && freeStock >= 0) {
           console.log(`   📦 Op voorraad, skip: ${product.sku || product.productName} (freeStock: ${freeStock})`)
           continue
+        }
+        if (freeStock === null) {
+          console.log(`   ⚠️ Stock niet te verifiëren voor ${product.sku || product.productName} → importeren (backorder order)`)
         }
 
         // Bepaal priority op basis van tags

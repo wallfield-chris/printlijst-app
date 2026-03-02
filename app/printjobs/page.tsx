@@ -358,6 +358,7 @@ export default function PrintJobsPage() {
           if (stats.inStock > 0) detail += `, ${stats.inStock} op voorraad`
           if (stats.excluded > 0) detail += `, ${stats.excluded} geëxcludeerd`
           if (stats.picked > 0) detail += `, ${stats.picked} al gepickt`
+          if (stats.stockUnverified > 0) detail += `, ${stats.stockUnverified} stock onbekend`
           if (stats.deletedBefore > 0) detail += ` (${stats.deletedBefore} oude verwijderd)`
           setSyncProgress({ step: 4, totalSteps: 4, message: `✅ Sync voltooid`, detail })
         }
