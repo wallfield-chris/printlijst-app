@@ -183,6 +183,7 @@ export async function POST(request: NextRequest) {
           // === Stock check + product details (1 API call, gecached) ===
           let supplierSku: string | null = null
           let imageUrl: string | null = null
+          let stockVerified = false
           
           if (product.productUuid) {
             const details = await getProductCached(product.productUuid)
@@ -193,6 +194,7 @@ export async function POST(request: NextRequest) {
                 totalInStock++
                 continue
               }
+              stockVerified = freeStock !== null
 
               // Supplier SKU
               supplierSku = details.supplier?.supplierSku || (details as any).supplierSku || null
@@ -202,7 +204,17 @@ export async function POST(request: NextRequest) {
                 imageUrl = details.picture
               }
             }
-            // Als getProduct faalt (null), importeren we toch — product data komt uit de order
+            // Als getProduct faalt (null) of geen stock data:
+            // NIET importeren → veiligheid boven alles
+            if (!stockVerified) {
+              totalInStock++ // tel als "overgeslagen"
+              console.log(`⚠️ Stock niet te verifiëren voor ${product.sku || product.productName} → overgeslagen (veilig)`)
+              continue
+            }
+          } else {
+            // Geen productUuid = geen stock check mogelijk → skip
+            console.log(`⚠️ Geen productUuid voor ${product.sku || product.productName} → overgeslagen`)
+            continue
           }
 
           // === Tags ===
