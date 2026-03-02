@@ -5,459 +5,298 @@ import { GoedGepicktAPI } from "@/lib/goedgepickt"
 
 /**
  * POST /api/goedgepickt/sync-orders
- * Synchroniseer orders uit GoedGepickt op basis van condition rules
+ * Synchroniseer orders uit GoedGepickt op basis van condition rules.
+ * 
+ * Body params:
+ *  - reset: boolean  (optioneel) — verwijdert alle pending printjobs voor een schone sync
  */
 export async function POST(request: NextRequest) {
   try {
     const session = await auth()
-
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Haal API key op
+    // Parse optionele body
+    let resetMode = false
+    try {
+      const body = await request.json()
+      resetMode = body?.reset === true
+    } catch {
+      // Geen body = gewone sync
+    }
+
+    // === Setup: API key + rules ===
     const apiKeySetting = await prisma.setting.findUnique({
       where: { key: "goedgepickt_api_key" },
     })
-
-    if (!apiKeySetting || !apiKeySetting.value) {
-      return NextResponse.json(
-        { error: "GoedGepickt API key not configured" },
-        { status: 400 }
-      )
+    if (!apiKeySetting?.value) {
+      return NextResponse.json({ error: "GoedGepickt API key not configured" }, { status: 400 })
     }
 
-    // Haal alle actieve condition rules op
-    const conditionRules = await prisma.conditionRule.findMany({
-      where: { active: true },
-    })
+    const [conditionRules, tagRules, priorityRules, exclusionRules] = await Promise.all([
+      prisma.conditionRule.findMany({ where: { active: true } }),
+      prisma.tagRule.findMany({ where: { active: true } }),
+      prisma.priorityRule.findMany({ where: { active: true } }),
+      prisma.exclusionRule.findMany({ where: { active: true } }),
+    ])
 
     if (conditionRules.length === 0) {
-      return NextResponse.json(
-        { error: "No active condition rules found" },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: "No active condition rules found" }, { status: 400 })
     }
 
-    // Haal alle actieve tag rules, priority rules en exclusion rules op
-    const tagRules = await prisma.tagRule.findMany({
-      where: { active: true },
-    })
-
-    const priorityRules = await prisma.priorityRule.findMany({
-      where: { active: true },
-    })
-
-    const exclusionRules = await prisma.exclusionRule.findMany({
-      where: { active: true },
-    })
-
-    // Initialiseer API client
-    const api = new GoedGepicktAPI(apiKeySetting.value)
-
-    console.log("📦 Syncing orders from GoedGepickt based on condition rules...")
-    console.log(`📋 Found ${conditionRules.length} condition rules`)
-    console.log(`🏷️  Found ${tagRules.length} tag rules`)
-    console.log(`⚡ Found ${priorityRules.length} priority rules`)
-    console.log(`🚫 Found ${exclusionRules.length} exclusion rules`)
-
-    let totalImported = 0
-    let totalSkipped = 0
-    let totalExcluded = 0
-    let totalDuplicates = 0
-    const createdJobs = []
-    const errors = []
-    const debugInfo: any = {
-      apiKeyConfigured: true,
-      rulesFound: {
-        conditions: conditionRules.length,
-        tags: tagRules.length,
-        priorities: priorityRules.length,
-        exclusions: exclusionRules.length,
-      },
-      backorderRuleFound: false,
-      ordersFromApi: 0,
-      matchingOrders: 0,
-      duplicateOrders: 0,
-      excludedProducts: 0,
-    }
-
-    // Voor nu specifiek backorder status orders
     const backorderRule = conditionRules.find(
-      (rule) => rule.field === "orderStatus" && rule.value === "backorder"
+      (r) => r.field === "orderStatus" && r.value === "backorder"
     )
+    if (!backorderRule) {
+      return NextResponse.json({ error: "No backorder condition rule found" }, { status: 400 })
+    }
 
-    if (backorderRule) {
-      debugInfo.backorderRuleFound = true
-      console.log("🔍 Fetching backorder orders from GoedGepickt API...")
-      console.log(`🔑 Using API key: ${apiKeySetting.value.substring(0, 10)}...`)
-      
-      // Gebruik createdAfter filter om alleen recente orders op te halen
-      // Standaard: laatste 30 dagen
-      const daysBack = 30
-      const createdAfter = new Date()
-      createdAfter.setDate(createdAfter.getDate() - daysBack)
-      // Locale datum (niet UTC) om timezone bug te voorkomen
-      const createdAfterStr = `${createdAfter.getFullYear()}-${String(createdAfter.getMonth() + 1).padStart(2, "0")}-${String(createdAfter.getDate()).padStart(2, "0")}`
-      
-      console.log(`📅 Fetching orders created after ${createdAfterStr} (last ${daysBack} days)`)
-      
-      // Stap 1: Haal eerste pagina op voor paginatie info
-      const firstPageOrders = await api.getOrders({ 
-        orderstatus: "backorder", 
-        createdAfter: createdAfterStr,
-        page: 1 
+    // === Reset mode: verwijder alle pending jobs ===
+    let deletedCount = 0
+    if (resetMode) {
+      const result = await prisma.printJob.deleteMany({
+        where: { printStatus: "pending" },
       })
-      
-      const paginationInfo = api.lastPaginationInfo
-      const totalPages = paginationInfo?.lastPage || 1
-      const totalItems = paginationInfo?.totalItems || firstPageOrders.length
-      
-      console.log(`📊 Found ${totalItems} orders across ${totalPages} pages`)
-      
-      // Stap 2: Haal ALLE pagina's op van ACHTEREN NAAR VOREN (nieuwste eerst)
-      // De API sorteert op createDate ASC, dus nieuwste orders staan op de laatste pagina's
-      // Door achteren te beginnen pakken we eerst de recentste (meest relevante) orders
-      const allOrders: any[] = []
-      
-      // Begin met de laatste pagina (nieuwste orders)
-      for (let page = totalPages; page >= 1; page--) {
-        // Pagina 1 hebben we al
-        if (page === 1) {
-          allOrders.push(...firstPageOrders)
-          continue
-        }
-        
-        console.log(`📄 Fetching page ${page}/${totalPages} (achteruit)...`)
-        try {
-          const pageOrders = await api.getOrders({ 
-            orderstatus: "backorder", 
-            createdAfter: createdAfterStr,
-            page 
-          })
-          
-          if (pageOrders.length === 0) {
-            console.log("   Lege pagina, overslaan")
-            continue
-          }
-          
-          allOrders.push(...pageOrders)
-          console.log(`   Found ${pageOrders.length} orders (total: ${allOrders.length})`)
-        } catch (pageError) {
-          console.error(`   ⚠️ Fout bij pagina ${page}, ga verder:`, pageError)
-        }
-      }
-      
-      // Stap 3: Filter alleen orders die daadwerkelijk status 'backorder' hebben
-      // De API retourneert ook orders die ooit backorder waren maar nu een andere status hebben
-      const backorderOnly = allOrders.filter(order => order.status === 'backorder')
-      console.log(`🔍 ${allOrders.length} orders opgehaald, ${backorderOnly.length} hebben daadwerkelijk status 'backorder'`)
-      
-      const orders = backorderOnly
-      debugInfo.ordersFromApi = allOrders.length
-      debugInfo.actualBackorderOrders = backorderOnly.length
-      debugInfo.filteredOut = allOrders.length - backorderOnly.length
-      debugInfo.createdAfter = createdAfterStr
-      debugInfo.totalPages = totalPages
-      
-      console.log(`📥 Processing ${orders.length} actual backorder orders`)
-      
-      let matchingOrders: typeof orders = orders
-      debugInfo.matchingOrders = matchingOrders.length
+      deletedCount = result.count
+      console.log(`🗑️  Reset mode: ${deletedCount} pending printjobs verwijderd`)
+    }
 
-      // Bouw een set van bestaande orderUuid+productUuid combinaties voor snelle lookup
-      const existingJobKeys = new Set<string>()
-      const allExistingJobs = await prisma.printJob.findMany({
+    // === Haal orders op uit GoedGepickt ===
+    const api = new GoedGepicktAPI(apiKeySetting.value)
+    
+    // Bij reset: haal alle backorder orders op (breed datumbereik)
+    // Bij normale sync: laatste 30 dagen
+    const daysBack = resetMode ? 365 : 30
+    const createdAfter = new Date()
+    createdAfter.setDate(createdAfter.getDate() - daysBack)
+    const createdAfterStr = `${createdAfter.getFullYear()}-${String(createdAfter.getMonth() + 1).padStart(2, "0")}-${String(createdAfter.getDate()).padStart(2, "0")}`
+    
+    console.log(`📅 Fetching orders created after ${createdAfterStr} (${resetMode ? "RESET" : "incremental"})`)
+      
+      // Stap 1: Haal eerste pagina op
+    const firstPageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page: 1 })
+    const paginationInfo = api.lastPaginationInfo
+    const totalPages = paginationInfo?.lastPage || 1
+    
+    console.log(`📊 Found ${paginationInfo?.totalItems || firstPageOrders.length} orders across ${totalPages} pages`)
+
+    // Stap 2: Haal alle pagina's op
+    const allOrders: any[] = []
+    for (let page = totalPages; page >= 1; page--) {
+      if (page === 1) {
+        allOrders.push(...firstPageOrders)
+        continue
+      }
+      try {
+        const pageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page })
+        if (pageOrders.length > 0) allOrders.push(...pageOrders)
+      } catch (err) {
+        console.error(`⚠️ Fout bij pagina ${page}:`, err)
+      }
+    }
+
+    // Stap 3: Filter op echte backorder status
+    const orders = allOrders.filter(o => o.status === "backorder")
+    console.log(`🔍 ${allOrders.length} opgehaald, ${orders.length} zijn echte backorders`)
+
+    // === Dedup lookup: bestaande actieve jobs ===
+    const existingJobKeys = new Set<string>()
+    if (!resetMode) {
+      const existingJobs = await prisma.printJob.findMany({
         where: { printStatus: { in: ["pending", "in_progress"] } },
         select: { orderUuid: true, productUuid: true, sku: true },
       })
-      for (const job of allExistingJobs) {
-        if (job.orderUuid && job.productUuid) {
-          existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
-        }
-        if (job.orderUuid && job.sku) {
-          existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
-        }
+      for (const job of existingJobs) {
+        if (job.orderUuid && job.productUuid) existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
+        if (job.orderUuid && job.sku) existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
       }
-      debugInfo.existingActiveJobs = allExistingJobs.length
-
-      for (const order of matchingOrders) {
-        try {
-          let orderHasProducts = false
-
-          // Verwerk elk product in de order
-          if (order.products && order.products.length > 0) {
-            for (const product of order.products) {
-              // Skip parent products
-              if (product.type === "parent") {
-                console.log(`   ⏭️  Skipping parent product in order ${order.orderNumber}`)
-                continue
-              }
-
-              // Check of dit specifieke product al geïmporteerd is (orderUuid + productUuid/sku)
-              const dupKeyProduct = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
-              const dupKeySku = product.sku ? `${order.uuid}::sku::${product.sku}` : null
-              if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku))) {
-                console.log(`⏭️  Duplicate: ${product.sku || product.productUuid} in order ${order.orderNumber || order.uuid}`)
-                totalDuplicates++
-                continue
-              }
-
-              // Check exclusion rules
-              let isExcluded = false
-              let exclusionReason = ""
-              
-              for (const rule of exclusionRules) {
-                let fieldValue = ""
-                
-                if (rule.field === "sku") {
-                  fieldValue = product.sku || ""
-                } else if (rule.field === "orderNumber") {
-                  fieldValue = order.orderNumber || ""
-                } else if (rule.field === "customerName") {
-                  fieldValue = order.customerName || order.customer?.name || ""
-                } else if (rule.field === "orderStatus") {
-                  fieldValue = order.status || ""
-                }
-
-                const matches = checkCondition(fieldValue, rule.condition, rule.value)
-                if (matches) {
-                  isExcluded = true
-                  exclusionReason = rule.reason || `${rule.field} ${rule.condition} ${rule.value}`
-                  break
-                }
-              }
-
-              if (isExcluded) {
-                console.log(`   ⛔ Excluded: ${product.sku || 'no-sku'} - ${product.productName} (${exclusionReason})`)
-                totalExcluded++
-                debugInfo.excludedProducts++
-                continue
-              }
-
-              // Check of product al gepickt is (= op voorraad, niet printen)
-              if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
-                console.log(`   ✅ Already picked: ${product.sku || 'no-sku'} - ${product.productName} (picked: ${product.pickedQuantity}/${product.productQuantity})`)
-                totalExcluded++
-                debugInfo.excludedProducts++
-                continue
-              }
-
-              // Check stock via product details - alleen printen als NIET op voorraad
-              // freeStock < 0 = écht in backorder | freeStock >= 0 = voorraad aanwezig of gereserveerd
-              if (product.productUuid) {
-                try {
-                  const stockDetails = await api.getProduct(product.productUuid)
-                  if (stockDetails) {
-                    const freeStock = stockDetails.stock?.freeStock ?? (stockDetails as any).freeStock ?? 0
-
-                    if (freeStock >= 0) {
-                      console.log(`   📦 In stock: ${product.sku || 'no-sku'} - ${product.productName} (freeStock: ${freeStock})`)
-                      totalExcluded++
-                      debugInfo.excludedProducts++
-                      continue
-                    }
-                  }
-                } catch (error) {
-                  console.warn(`   ⚠️  Could not check stock for ${product.sku}, importing anyway`)
-                }
-              }
-
-              orderHasProducts = true
-
-              // Haal product details op voor supplierSku en afbeelding
-              let supplierSku: string | null = null
-              let imageUrl: string | null = null
-              if (product.productUuid) {
-                try {
-                  const productDetails = await api.getProduct(product.productUuid)
-                  if (productDetails) {
-                    if (productDetails.supplier?.supplierSku) {
-                      supplierSku = productDetails.supplier.supplierSku
-                    } else if (productDetails.supplierSku) {
-                      supplierSku = productDetails.supplierSku
-                    }
-                    // Haal product afbeelding op (skip placeholder)
-                    if (productDetails.picture && !productDetails.picture.includes('image_placeholder')) {
-                      imageUrl = productDetails.picture
-                    }
-                  }
-                } catch (error) {
-                  console.warn(`⚠️  Could not fetch product details for ${product.productUuid}`)
-                }
-              }
-
-              // Bepaal tags op basis van tag rules
-              const appliedTags: string[] = []
-              for (const rule of tagRules) {
-                let fieldValue = ""
-                
-                if (rule.field === "sku") {
-                  fieldValue = product.sku || ""
-                } else if (rule.field === "orderStatus") {
-                  fieldValue = order.status || ""
-                }
-
-                const matches = checkCondition(fieldValue, rule.condition, rule.value)
-                if (matches) {
-                  appliedTags.push(rule.tag)
-                }
-              }
-
-              // Bepaal priority op basis van priority rules
-              // Check zowel het huidige product als alle andere producten in de order (voor scope: order)
-              let priority = "normal"
-              for (const rule of priorityRules) {
-                if (rule.scope === "order") {
-                  // Bij scope 'order': check ALLE producten in de order
-                  const allProducts = order.products || []
-                  for (const p of allProducts) {
-                    let fieldValue = ""
-                    
-                    if (rule.field === "sku") {
-                      fieldValue = p.sku || ""
-                    } else if (rule.field === "orderStatus") {
-                      fieldValue = order.status || ""
-                    } else if (rule.field === "customerName") {
-                      fieldValue = order.customerName || order.customer?.name || ""
-                    }
-
-                    if (checkCondition(fieldValue, rule.condition, rule.value)) {
-                      priority = rule.priority
-                      console.log(`   🔴 Priority ${rule.priority}: matched ${rule.field} "${fieldValue}" via product ${p.sku} (scope: order)`)
-                      break
-                    }
-                  }
-                  if (priority !== "normal") break
-                } else {
-                  // Bij scope 'product': check alleen het huidige product
-                  let fieldValue = ""
-                  
-                  if (rule.field === "sku") {
-                    fieldValue = product.sku || ""
-                  } else if (rule.field === "orderStatus") {
-                    fieldValue = order.status || ""
-                  } else if (rule.field === "customerName") {
-                    fieldValue = order.customerName || order.customer?.name || ""
-                  }
-
-                  if (checkCondition(fieldValue, rule.condition, rule.value)) {
-                    priority = rule.priority
-                  }
-                }
-              }
-
-              // Combineer order tags met regel tags
-              const orderTags = order.tags && Array.isArray(order.tags)
-                ? order.tags.filter((t: any) => typeof t === 'string')
-                : []
-              
-              const allTags = [...appliedTags, ...orderTags]
-              const tagsString = allTags.length > 0 ? allTags.join(", ") : null
-
-              // Gebruik order createDate als receivedAt datum
-              const orderDate = order.createDate ? new Date(order.createDate) : new Date()
-
-              // Maak printjob
-              const printJob = await prisma.printJob.create({
-                data: {
-                  orderUuid: order.uuid || "",
-                  orderNumber: order.externalDisplayId || order.orderNumber || "",
-                  productUuid: product.productUuid,
-                  productName: product.productName || "Onbekend product",
-                  sku: product.sku,
-                  backfile: supplierSku,
-                  imageUrl,
-                  quantity: product.productQuantity || 1,
-                  pickedQuantity: product.pickedQuantity || 0,
-                  priority,
-                  tags: tagsString,
-                  customerName: order.customer?.name || order.customerName,
-                  notes: order.notes,
-                  printStatus: "pending",
-                  orderStatus: order.status,
-                  backorder: order.status === "backorder",
-                  receivedAt: orderDate,
-                  webhookData: JSON.stringify({ order, product }, null, 2),
-                },
-              })
-
-              createdJobs.push(printJob)
-              totalImported++
-
-              // Registreer in lookup set zodat volgende sync-calls geen duplicaten maken
-              if (dupKeyProduct) existingJobKeys.add(dupKeyProduct)
-              if (dupKeySku) existingJobKeys.add(dupKeySku)
-            }
-          }
-        } catch (error: any) {
-          console.error(`❌ Error processing order ${order.uuid}:`, error)
-          errors.push({
-            orderUuid: order.uuid,
-            error: error.message,
-          })
-        }
-      }
-    } else {
-      console.log("⚠️  No backorder condition rule found")
-      console.log("💡 Tip: Create a condition rule with field 'orderStatus' and value 'backorder'")
     }
 
-    totalSkipped = totalDuplicates + totalExcluded
+    // === Product detail cache (voorkomt dubbele API calls) ===
+    const productCache = new Map<string, any>()
+    async function getProductCached(productUuid: string) {
+      if (productCache.has(productUuid)) return productCache.get(productUuid)
+      try {
+        const details = await api.getProduct(productUuid)
+        productCache.set(productUuid, details)
+        return details
+      } catch {
+        productCache.set(productUuid, null)
+        return null
+      }
+    }
 
-    console.log(`\n✅ Sync complete:`)
-    console.log(`   📥 ${totalImported} jobs imported`)
-    console.log(`   ⏭️  ${totalDuplicates} duplicate orders skipped`)
-    console.log(`   ⛔ ${totalExcluded} products excluded by rules`)
-    console.log(`   📊 ${totalSkipped} total skipped`)
+    // === Verwerk orders ===
+    let totalImported = 0
+    let totalDuplicates = 0
+    let totalExcluded = 0
+    let totalInStock = 0
+    let totalPicked = 0
+    const errors: { orderUuid: string; error: string }[] = []
+
+    for (const order of orders) {
+      try {
+        if (!order.products || order.products.length === 0) continue
+
+        for (const product of order.products) {
+          // Skip parent products
+          if (product.type === "parent") continue
+
+          // === Dedup check ===
+          const dupKey1 = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
+          const dupKey2 = product.sku ? `${order.uuid}::sku::${product.sku}` : null
+          if ((dupKey1 && existingJobKeys.has(dupKey1)) || (dupKey2 && existingJobKeys.has(dupKey2))) {
+            totalDuplicates++
+            continue
+          }
+
+          // === Exclusion rules ===
+          let isExcluded = false
+          for (const rule of exclusionRules) {
+            let val = ""
+            if (rule.field === "sku") val = product.sku || ""
+            else if (rule.field === "orderNumber") val = order.orderNumber || ""
+            else if (rule.field === "customerName") val = order.customerName || order.customer?.name || ""
+            else if (rule.field === "orderStatus") val = order.status || ""
+            if (checkCondition(val, rule.condition, rule.value)) { isExcluded = true; break }
+          }
+          if (isExcluded) { totalExcluded++; continue }
+
+          // === Al gepickt? ===
+          if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
+            totalPicked++
+            continue
+          }
+
+          // === Stock check + product details (1 API call, gecached) ===
+          let supplierSku: string | null = null
+          let imageUrl: string | null = null
+          
+          if (product.productUuid) {
+            const details = await getProductCached(product.productUuid)
+            if (details) {
+              // Stock check: freeStock >= 0 = op voorraad → niet importeren
+              const freeStock = details.stock?.freeStock ?? (details as any).freeStock ?? null
+              if (freeStock !== null && freeStock >= 0) {
+                totalInStock++
+                continue
+              }
+
+              // Supplier SKU
+              supplierSku = details.supplier?.supplierSku || (details as any).supplierSku || null
+
+              // Afbeelding
+              if (details.picture && !details.picture.includes("image_placeholder")) {
+                imageUrl = details.picture
+              }
+            }
+            // Als getProduct faalt (null), importeren we toch — product data komt uit de order
+          }
+
+          // === Tags ===
+          const appliedTags: string[] = []
+          const orderTagsArr = (order.tags && Array.isArray(order.tags))
+            ? order.tags.filter((t: any) => typeof t === "string")
+            : []
+          appliedTags.push(...orderTagsArr)
+          
+          for (const rule of tagRules) {
+            let val = ""
+            if (rule.field === "sku") val = product.sku || ""
+            else if (rule.field === "orderStatus") val = order.status || ""
+            if (checkCondition(val, rule.condition, rule.value) && !appliedTags.includes(rule.tag)) {
+              appliedTags.push(rule.tag)
+            }
+          }
+
+          // === Priority ===
+          let priority = "normal"
+          for (const rule of priorityRules) {
+            const productsToCheck = rule.scope === "order" ? (order.products || []) : [product]
+            for (const p of productsToCheck) {
+              let val = ""
+              if (rule.field === "sku") val = p.sku || ""
+              else if (rule.field === "orderStatus") val = order.status || ""
+              else if (rule.field === "customerName") val = order.customerName || order.customer?.name || ""
+              if (checkCondition(val, rule.condition, rule.value)) { priority = rule.priority; break }
+            }
+            if (priority !== "normal") break
+          }
+
+          // === Maak printjob ===
+          const orderDate = order.createDate ? new Date(order.createDate) : new Date()
+          await prisma.printJob.create({
+            data: {
+              orderUuid: order.uuid || "",
+              orderNumber: order.externalDisplayId || order.orderNumber || "",
+              productUuid: product.productUuid,
+              productName: product.productName || "Onbekend product",
+              sku: product.sku,
+              backfile: supplierSku,
+              imageUrl,
+              quantity: product.productQuantity || 1,
+              pickedQuantity: product.pickedQuantity || 0,
+              priority,
+              tags: appliedTags.length > 0 ? appliedTags.join(", ") : null,
+              customerName: order.customer?.name || order.customerName,
+              notes: order.notes,
+              printStatus: "pending",
+              orderStatus: order.status,
+              backorder: order.status === "backorder",
+              receivedAt: orderDate,
+              webhookData: JSON.stringify({ order, product }, null, 2),
+            },
+          })
+
+          totalImported++
+          if (dupKey1) existingJobKeys.add(dupKey1)
+          if (dupKey2) existingJobKeys.add(dupKey2)
+        }
+      } catch (error: any) {
+        console.error(`❌ Error processing order ${order.uuid}:`, error)
+        errors.push({ orderUuid: order.uuid, error: error.message })
+      }
+    }
+
+    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked`)
 
     return NextResponse.json({
       success: true,
       message: `Sync complete: ${totalImported} jobs created`,
       stats: {
         imported: totalImported,
-        skipped: totalSkipped,
         duplicates: totalDuplicates,
         excluded: totalExcluded,
+        inStock: totalInStock,
+        picked: totalPicked,
         errors: errors.length,
+        ...(resetMode ? { deletedBefore: deletedCount } : {}),
       },
-      debug: debugInfo,
-      printJobs: createdJobs.map((job) => ({
-        id: job.id,
-        productName: job.productName,
-        quantity: job.quantity,
-        priority: job.priority,
-        backorder: job.backorder,
-        tags: job.tags,
-      })),
+      debug: {
+        resetMode,
+        ordersFromApi: allOrders.length,
+        actualBackorders: orders.length,
+        createdAfter: createdAfterStr,
+        totalPages,
+        productCacheSize: productCache.size,
+      },
       errors: errors.length > 0 ? errors : undefined,
     })
   } catch (error: any) {
     console.error("❌ Sync error:", error)
-    return NextResponse.json(
-      { error: error.message || "Error syncing orders" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: error.message || "Error syncing orders" }, { status: 500 })
   }
 }
 
-/**
- * Helper functie om condities te checken
- */
 function checkCondition(fieldValue: string, condition: string, ruleValue: string): boolean {
-  const normalizedField = fieldValue.toLowerCase()
-  const normalizedValue = ruleValue.toLowerCase()
-
+  const a = fieldValue.toLowerCase()
+  const b = ruleValue.toLowerCase()
   switch (condition) {
-    case "equals":
-      return normalizedField === normalizedValue
-    case "starts_with":
-      return normalizedField.startsWith(normalizedValue)
-    case "ends_with":
-      return normalizedField.endsWith(normalizedValue)
-    case "contains":
-      return normalizedField.includes(normalizedValue)
-    default:
-      return false
+    case "equals": return a === b
+    case "starts_with": return a.startsWith(b)
+    case "ends_with": return a.endsWith(b)
+    case "contains": return a.includes(b)
+    default: return false
   }
 }

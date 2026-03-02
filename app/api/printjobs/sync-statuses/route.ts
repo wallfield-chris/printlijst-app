@@ -124,6 +124,22 @@ export async function POST(request: NextRequest) {
               await prisma.printJob.delete({ where: { id: job.id } })
               deletedCount++
               console.log(`   ✅ Al verzonden, verwijderd: ${job.sku} (picked: ${picked}/${needed})`)
+              continue
+            }
+
+            // Stock check: als freeStock >= 0 is het product op voorraad → verwijderen
+            try {
+              const productDetails = await api.getProduct(job.productUuid)
+              if (productDetails) {
+                const freeStock = productDetails.stock?.freeStock ?? (productDetails as any).freeStock ?? null
+                if (freeStock !== null && freeStock >= 0) {
+                  await prisma.printJob.delete({ where: { id: job.id } })
+                  deletedCount++
+                  console.log(`   📦 Op voorraad (freeStock: ${freeStock}), verwijderd: ${job.sku}`)
+                }
+              }
+            } catch {
+              // Stock check mislukt → job behouden
             }
           }
         }

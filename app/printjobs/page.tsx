@@ -230,31 +230,22 @@ export default function PrintJobsPage() {
       setRefreshing(true)
       setError("")
 
-      // Stap 1: Haal nieuwe backorder orders op uit GoedGepickt
-      const syncOrdersResponse = await fetch("/api/goedgepickt/sync-orders", {
+      // Full reset sync: verwijder alle pending jobs en doe een schone import
+      const syncResponse = await fetch("/api/goedgepickt/sync-orders", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset: true }),
       })
-      if (syncOrdersResponse.ok) {
-        const syncData = await syncOrdersResponse.json()
-        if (syncData.stats?.imported > 0) {
-          console.log(`📦 ${syncData.stats.imported} nieuwe orders geïmporteerd`)
-        }
-      }
-
-      // Stap 2: Verwijder afgeronde orders en update statussen
-      const statusResponse = await fetch("/api/printjobs/sync-statuses", {
-        method: "POST",
-      })
-      const statusData = await statusResponse.json()
-      if (!statusResponse.ok) {
-        throw new Error(statusData.error || "Fout bij ophalen van statussen")
-      }
-      if (statusData.deleted > 0 || statusData.updated > 0) {
-        console.log(`🔄 Sync: ${statusData.deleted} verwijderd, ${statusData.updated} geüpdated`)
+      if (syncResponse.ok) {
+        const syncData = await syncResponse.json()
+        console.log(`🔄 Reset sync: ${syncData.stats?.deletedBefore || 0} verwijderd, ${syncData.stats?.imported || 0} geïmporteerd`)
+      } else {
+        const errData = await syncResponse.json().catch(() => ({}))
+        throw new Error(errData.error || "Fout bij synchroniseren")
       }
     } catch (err: any) {
-      console.error("Kon statussen niet ophalen:", err)
-      setError("Kon statussen niet ophalen uit GoedGepickt")
+      console.error("Sync fout:", err)
+      setError("Kon orders niet synchroniseren uit GoedGepickt")
     } finally {
       setRefreshing(false)
     }
@@ -276,7 +267,7 @@ export default function PrintJobsPage() {
   const syncOrdersFromGoedgepickt = async () => {
     if (syncing) return
     
-    if (!confirm("Orders ophalen uit GoedGepickt? Dit kan even duren.")) {
+    if (!confirm("Volledige hernieuwde sync uit GoedGepickt? Alle bestaande wachtende jobs worden verwijderd en opnieuw opgehaald.")) {
       return
     }
 
@@ -286,9 +277,8 @@ export default function PrintJobsPage() {
       
       const response = await fetch("/api/goedgepickt/sync-orders", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset: true }),
       })
 
       const data = await response.json()
@@ -299,10 +289,19 @@ export default function PrintJobsPage() {
 
       // Toon gedetailleerde feedback
       let message = `✅ Sync compleet!\n\n`
+      
+      if (data.stats.deletedBefore > 0) {
+        message += `🗑️ ${data.stats.deletedBefore} oude jobs verwijderd\n`
+      }
+      
       message += `📥 ${data.stats.imported} jobs geïmporteerd\n`
       
-      if (data.stats.duplicates > 0) {
-        message += `⏭️  ${data.stats.duplicates} duplicate orders overgeslagen\n`
+      if (data.stats.inStock > 0) {
+        message += `📦 ${data.stats.inStock} producten op voorraad (overgeslagen)\n`
+      }
+      
+      if (data.stats.picked > 0) {
+        message += `✅ ${data.stats.picked} producten al gepickt (overgeslagen)\n`
       }
       
       if (data.stats.excluded > 0) {
