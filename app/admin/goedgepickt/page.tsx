@@ -730,7 +730,7 @@ export default function GoedgepicktPage() {
                 <h3 className="font-semibold text-gray-900">
                   {new Date(tooltipDay.date + "T00:00:00").toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" })}
                 </h3>
-                <div className="mt-2 grid grid-cols-4 gap-4 text-sm">
+                <div className="mt-2 grid grid-cols-5 gap-4 text-sm">
                   <div>
                     <p className="text-gray-500">Zendingen</p>
                     <p className="text-lg font-bold text-green-600">{tooltipDay.shipments}</p>
@@ -746,6 +746,14 @@ export default function GoedgepicktPage() {
                   <div>
                     <p className="text-gray-500">Zend./uur</p>
                     <p className="text-lg font-bold text-blue-600">{tooltipDay.shipmentsPerHour || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">€/zending</p>
+                    <p className="text-lg font-bold text-rose-600">
+                      {tooltipDay.inpakHours && tooltipDay.shipments
+                        ? `€${((tooltipDay.inpakHours * 17) / tooltipDay.shipments).toFixed(2)}`
+                        : "—"}
+                    </p>
                   </div>
                 </div>
               </div>
