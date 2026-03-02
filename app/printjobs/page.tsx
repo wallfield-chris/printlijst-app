@@ -70,11 +70,6 @@ export default function PrintJobsPage() {
       return
     }
 
-    if ((session.user as any).role === "admin") {
-      router.push("/admin")
-      return
-    }
-
     fetchPrintJobs()
     fetchListViews()
   }, [session, status, router])
@@ -83,7 +78,7 @@ export default function PrintJobsPage() {
   // + check-completed elke 30 seconden (verwijdert afgeronde orders uit GG)
   // + auto-sync vanuit GoedGepickt elke 2 minuten (importeert nieuwe orders)
   useEffect(() => {
-    if (!session || (session.user as any).role === "admin") return
+    if (!session) return
 
     const pollForUpdates = async () => {
       try {
