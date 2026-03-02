@@ -42,6 +42,10 @@ export default function SettingsPage() {
   const [debugMode, setDebugMode] = useState(false)
   const [webhookLogs, setWebhookLogs] = useState<any[]>([])
 
+  // Backfill images
+  const [isBackfilling, setIsBackfilling] = useState(false)
+  const [backfillResult, setBackfillResult] = useState<{ message: string; updated: number; total: number } | null>(null)
+
   // Load settings on mount
   useEffect(() => {
     loadSettings()
@@ -359,6 +363,21 @@ export default function SettingsPage() {
     alert("Settings opgeslagen!")
   }
 
+  const handleBackfillImages = async () => {
+    try {
+      setIsBackfilling(true)
+      setBackfillResult(null)
+      const res = await fetch("/api/printjobs/backfill-images", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Fout")
+      setBackfillResult(data)
+    } catch (err: any) {
+      setBackfillResult({ message: err.message || "Fout bij ophalen", updated: 0, total: 0 })
+    } finally {
+      setIsBackfilling(false)
+    }
+  }
+
   const tabs = [
     { id: "algemeen" as Tab, name: "Algemeen" },
     { id: "integraties" as Tab, name: "Integraties" },
@@ -508,6 +527,34 @@ export default function SettingsPage() {
                   Wijzig Wachtwoord
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* Tools */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Tools</h2>
+              <p className="text-sm text-gray-500 mt-1">Onderhoud en data-reparatie</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Afbeeldingen aanvullen</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Haalt ontbrekende productafbeeldingen op uit GoedGepickt</p>
+                </div>
+                <button
+                  onClick={handleBackfillImages}
+                  disabled={isBackfilling}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isBackfilling ? "⏳ Bezig..." : "🖼️ Afbeeldingen ophalen"}
+                </button>
+              </div>
+              {backfillResult && (
+                <div className={`text-sm p-3 rounded-lg ${backfillResult.updated > 0 ? "bg-green-50 text-green-700" : "bg-gray-50 text-gray-600"}`}>
+                  {backfillResult.message}
+                </div>
+              )}
             </div>
           </div>
 
