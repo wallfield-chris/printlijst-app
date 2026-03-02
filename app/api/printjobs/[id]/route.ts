@@ -36,6 +36,12 @@ export async function PATCH(
       updateData.completedBy = (session.user as any).id
     }
 
+    if (printStatus === "waiting" || printStatus === "pending") {
+      updateData.completedAt = null
+      updateData.completedBy = null
+      updateData.startedAt = null
+    }
+
     const printJob = await prisma.printJob.update({
       where: { id },
       data: updateData,

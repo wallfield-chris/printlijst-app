@@ -33,12 +33,16 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
 
-/** Fetch with retry on 429 rate limit */
-async function fetchWithRetry(url: string, headers: Record<string, string>, retries = 4): Promise<Response> {
+/** Fetch with retry on 429 rate limit — longer waits */
+async function fetchWithRetry(url: string, headers: Record<string, string>, retries = 5): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(url, { headers, cache: "no-store" })
     if (res.status !== 429) return res
-    const waitMs = Math.min(2000 * Math.pow(2, attempt), 15000)
+    // Check Retry-After header first, otherwise use exponential backoff
+    const retryAfter = res.headers.get("Retry-After")
+    const waitMs = retryAfter
+      ? parseInt(retryAfter) * 1000
+      : Math.min(5000 * Math.pow(2, attempt), 30000)
     console.log(`[SYNC] Rate limited (429), wacht ${waitMs}ms... (poging ${attempt + 1}/${retries + 1})`)
     await sleep(waitMs)
   }
@@ -46,7 +50,7 @@ async function fetchWithRetry(url: string, headers: Record<string, string>, retr
 }
 
 /** Fetch all pages with rate limit handling + inter-page delay */
-async function fetchAllPages(url: string, headers: Record<string, string>, maxPages = 200): Promise<any[]> {
+async function fetchAllPages(url: string, headers: Record<string, string>, maxPages = 200): Promise<{ items: any[]; success: boolean }> {
   const allItems: any[] = []
   let page = 1
   let lastPage = 1
@@ -56,7 +60,8 @@ async function fetchAllPages(url: string, headers: Record<string, string>, maxPa
     const res = await fetchWithRetry(`${url}${sep}page=${page}`, headers)
     if (res.status !== 200) {
       console.log(`[SYNC] fetchAllPages stopped at page ${page}: status ${res.status}`)
-      break
+      // Return what we have, but mark as failed if we got nothing
+      return { items: allItems, success: allItems.length > 0 }
     }
     const data = await res.json()
     const items = data.items || data.data || []
@@ -70,11 +75,11 @@ async function fetchAllPages(url: string, headers: Record<string, string>, maxPa
     }
     if (items.length === 0) break
 
-    // Kleine vertraging tussen pagina's om rate limits te vermijden
-    if (page < lastPage) await sleep(300)
+    // Vertraging tussen pagina's om rate limits te vermijden
+    if (page < lastPage) await sleep(500)
     page++
   }
-  return allItems
+  return { items: allItems, success: true }
 }
 
 interface ShiftbaseEntry {
@@ -142,6 +147,8 @@ export async function POST(request: NextRequest) {
 
     let ggShipmentsFetched = 0
     let ggOrdersFetched = 0
+    let shipmentsFetchSuccess = false
+    let ordersFetchSuccess = false
 
     // ===================================================================
     // 1. GoedGepickt — Zendingen
@@ -149,16 +156,26 @@ export async function POST(request: NextRequest) {
     if (ggKeySetting?.value) {
       const headers = ggHeaders(ggKeySetting.value)
 
+      // Eerst wachten om eventuele rate limit te laten herstellen
+      console.log("[SYNC] Wacht 3s voor rate limit cooldown...")
+      await sleep(3000)
+
       console.log("[SYNC] Fetching GG shipments...")
-      const allShipments = await fetchAllPages(
+      const shipmentsResult = await fetchAllPages(
         `${GG_BASE}/shipments?createdAfter=${startStr}`,
         headers
       )
-      ggShipmentsFetched = allShipments.length
-      console.log(`[SYNC] GG shipments fetched: ${allShipments.length}`)
+      ggShipmentsFetched = shipmentsResult.items.length
+      shipmentsFetchSuccess = shipmentsResult.success
+      console.log(`[SYNC] GG shipments fetched: ${shipmentsResult.items.length} (success: ${shipmentsResult.success})`)
+
+      // Debug: log first few dates
+      if (shipmentsResult.items.length > 0) {
+        console.log(`[SYNC] First shipment createDate: ${shipmentsResult.items[0].createDate}`)
+      }
 
       // Groepeer per createDate
-      for (const s of allShipments) {
+      for (const s of shipmentsResult.items) {
         const cd = s.createDate ? new Date(s.createDate) : null
         if (cd && !isNaN(cd.getTime())) {
           const dayKey = toDateStr(cd)
@@ -168,19 +185,24 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Pauze tussen secties om rate limit te respecteren
+      console.log("[SYNC] Wacht 5s tussen shipments en orders...")
+      await sleep(5000)
+
       // ===================================================================
       // 2. GoedGepickt — Completed Orders (voor afhandeltijd)
       // ===================================================================
       console.log("[SYNC] Fetching GG completed orders...")
-      const allOrders = await fetchAllPages(
+      const ordersResult = await fetchAllPages(
         `${GG_BASE}/orders?orderstatus=completed&createdAfter=${startStr}`,
         headers
       )
-      ggOrdersFetched = allOrders.length
-      console.log(`[SYNC] GG completed orders fetched: ${allOrders.length}`)
+      ggOrdersFetched = ordersResult.items.length
+      ordersFetchSuccess = ordersResult.success
+      console.log(`[SYNC] GG completed orders fetched: ${ordersResult.items.length} (success: ${ordersResult.success})`)
 
       // Groepeer per finishDate
-      for (const order of allOrders) {
+      for (const order of ordersResult.items) {
         const finishDate = order.finishDate ? new Date(order.finishDate) : null
         const createDate = order.createDate ? new Date(order.createDate) : null
 
@@ -274,38 +296,60 @@ export async function POST(request: NextRequest) {
 
     // ===================================================================
     // 4. Opslaan in database — upsert per dag
+    //    Alleen velden updaten die succesvol gefetcht zijn
     // ===================================================================
     console.log("[SYNC] Writing to database...")
+    console.log(`[SYNC] Shipments success: ${shipmentsFetchSuccess}, Orders success: ${ordersFetchSuccess}`)
     let upsertCount = 0
 
     for (const [date, d] of Object.entries(dayData)) {
+      // Build update object - alleen velden die succesvol zijn opgehaald
+      const updateData: Record<string, any> = {
+        syncedAt: new Date(),
+      }
+      const createData: Record<string, any> = {
+        date,
+      }
+
+      // GG shipments - alleen updaten als fetch succesvol was
+      if (shipmentsFetchSuccess) {
+        updateData.shipments = d.shipments
+        createData.shipments = d.shipments
+      }
+
+      // GG completed orders - alleen updaten als fetch succesvol was
+      if (ordersFetchSuccess) {
+        updateData.completedOrders = d.completedOrders
+        updateData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
+        createData.completedOrders = d.completedOrders
+        createData.processingDaysList = d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null
+      }
+
+      // Shiftbase - altijd updaten (1 API call, geen rate limit issues)
+      if (sbKeySetting?.value) {
+        updateData.inpakHours = Math.round(d.inpakHours * 10) / 10
+        updateData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
+        updateData.printHours = Math.round(d.printHours * 10) / 10
+        updateData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
+        createData.inpakHours = Math.round(d.inpakHours * 10) / 10
+        createData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
+        createData.printHours = Math.round(d.printHours * 10) / 10
+        createData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
+      }
+
       await prisma.dailyMetric.upsert({
         where: { date },
-        create: {
-          date,
-          shipments: d.shipments,
-          completedOrders: d.completedOrders,
-          processingDaysList: d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null,
-          inpakHours: Math.round(d.inpakHours * 10) / 10,
-          inpakEmployees: d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null,
-          printHours: Math.round(d.printHours * 10) / 10,
-          allTeamsData: d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null,
-        },
-        update: {
-          shipments: d.shipments,
-          completedOrders: d.completedOrders,
-          processingDaysList: d.processingDays.length > 0 ? JSON.stringify(d.processingDays) : null,
-          inpakHours: Math.round(d.inpakHours * 10) / 10,
-          inpakEmployees: d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null,
-          printHours: Math.round(d.printHours * 10) / 10,
-          allTeamsData: d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null,
-          syncedAt: new Date(),
-        },
+        create: createData as any,
+        update: updateData,
       })
       upsertCount++
     }
 
     console.log(`[SYNC] Done! ${upsertCount} dagen opgeslagen`)
+
+    const warnings: string[] = []
+    if (!shipmentsFetchSuccess) warnings.push("Zendingen konden niet volledig worden opgehaald (rate limit)")
+    if (!ordersFetchSuccess) warnings.push("Orders konden niet volledig worden opgehaald (rate limit)")
 
     return NextResponse.json({
       success: true,
@@ -317,7 +361,10 @@ export async function POST(request: NextRequest) {
         ggShipments: ggShipmentsFetched,
         ggOrders: ggOrdersFetched,
         hasShiftbase: !!sbKeySetting?.value,
+        shipmentsFetchSuccess,
+        ordersFetchSuccess,
       },
+      warnings: warnings.length > 0 ? warnings : undefined,
     })
   } catch (error) {
     console.error("[SYNC] Error:", error)

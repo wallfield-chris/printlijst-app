@@ -144,7 +144,8 @@ export default function GoedgepicktPage() {
       })
       const data = await res.json()
       if (data.success) {
-        setSyncMessage(`Klaar! ${data.synced.rowsWritten} dagen gesynchroniseerd`)
+        const warnings = data.warnings ? ` ⚠ ${data.warnings.join(". ")}` : ""
+        setSyncMessage(`Klaar! ${data.synced.rowsWritten} dagen gesynchroniseerd (${data.synced.ggShipments} zendingen, ${data.synced.ggOrders} orders)${warnings}`)
         // Herlaad stats
         await fetchStats()
       } else {
@@ -154,7 +155,7 @@ export default function GoedgepicktPage() {
       setSyncMessage("Fout bij synchroniseren")
     } finally {
       setSyncing(false)
-      setTimeout(() => setSyncMessage(""), 5000)
+      setTimeout(() => setSyncMessage(""), 10000)
     }
   }
 

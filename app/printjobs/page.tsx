@@ -439,6 +439,23 @@ export default function PrintJobsPage() {
     setModalImageUrl(null)
   }
 
+  const handleResetToWaiting = async () => {
+    if (!selectedJob) return
+    try {
+      const response = await fetch(`/api/printjobs/${selectedJob.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ printStatus: "pending", missingFile: false }),
+      })
+      if (!response.ok) throw new Error("Fout bij terugzetten")
+      await fetchPrintJobs()
+      setSelectedJob({ ...selectedJob, printStatus: "pending", missingFile: false })
+    } catch (err) {
+      alert("Kon printjob niet terugzetten")
+      console.error(err)
+    }
+  }
+
   const handleCompleteAndNext = async () => {
     if (!selectedJob) return
     
@@ -866,19 +883,34 @@ export default function PrintJobsPage() {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 mt-6">
-                <button
-                  onClick={handleMissingPrintfile}
-                  className="px-6 py-3 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 font-medium"
-                >
-                  Missing Printfile
-                </button>
-                <button
-                  onClick={handleCompleteAndNext}
-                  className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
-                >
-                  Complete & Next
-                </button>
+              <div className="flex items-center justify-between mt-6">
+                {(selectedJob.printStatus === "completed" || selectedJob.missingFile) ? (
+                  <button
+                    onClick={handleResetToWaiting}
+                    className="px-5 py-3 bg-gray-500 text-white rounded-md hover:bg-gray-600 font-medium flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    Terugzetten
+                  </button>
+                ) : (
+                  <div></div>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleMissingPrintfile}
+                    className="px-6 py-3 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 font-medium"
+                  >
+                    Missing Printfile
+                  </button>
+                  <button
+                    onClick={handleCompleteAndNext}
+                    className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
+                  >
+                    Complete & Next
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -963,8 +995,8 @@ export default function PrintJobsPage() {
                   ) : (
                     <input
                       type="text"
-                      value={selectedLocation}
-                      onChange={(e) => setSelectedLocation(e.target.value)}
+                      value={selectedLocation?.name || ""}
+                      onChange={(e) => setSelectedLocation(e.target.value ? { uuid: "", name: e.target.value } : null)}
                       placeholder="Bijv. Rek A-12"
                       className="w-full border border-gray-300 rounded-md px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
                     />
