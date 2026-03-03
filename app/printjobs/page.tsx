@@ -674,14 +674,14 @@ export default function PrintJobsPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Tabs */}
         {listViews.length > 0 && (
-          <div className="mb-6 border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
+          <div className="mb-6">
+            <nav className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
               <button
                 onClick={() => setActiveTab("all")}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all duration-150 ${
                   activeTab === "all"
-                    ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                 }`}
               >
                 Alle ({printJobs.length})
@@ -693,18 +693,30 @@ export default function PrintJobsPage() {
                   const jobTags = job.tags.split(",").filter(t => t)
                   return viewTags.some(tag => jobTags.includes(tag))
                 }).length
+                const isML = view.name.includes("ML")
 
                 return (
                   <button
                     key={view.id}
                     onClick={() => setActiveTab(view.id)}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                    className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all duration-150 ${
                       activeTab === view.id
-                        ? "border-blue-500 text-blue-600"
-                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        ? isML
+                          ? "bg-purple-600 text-white shadow-sm"
+                          : "bg-blue-600 text-white shadow-sm"
+                        : isML
+                          ? "bg-purple-50 text-purple-700 hover:bg-purple-100 ring-1 ring-purple-200"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                     }`}
                   >
-                    {view.name} ({count})
+                    {view.name}
+                    <span className={`ml-1.5 text-xs ${
+                      activeTab === view.id
+                        ? "text-white/80"
+                        : isML ? "text-purple-400" : "text-gray-400"
+                    }`}>
+                      {count}
+                    </span>
                   </button>
                 )
               })}
