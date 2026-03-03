@@ -702,6 +702,9 @@ export async function POST(request: NextRequest) {
           continue // Skip deze printjob
         }
 
+        // SKU 1041 = custom schilderij → bestand moet nog gemaakt worden
+        const isCustomFile = product.sku?.startsWith("1041") || false
+
         // Maak printjob aan
         const printJob = await prisma.printJob.create({
           data: {
@@ -721,6 +724,7 @@ export async function POST(request: NextRequest) {
             notes: order.notes,
             printStatus: "pending",
             backorder: isBackorder,
+            missingFile: isCustomFile,
             webhookData: JSON.stringify(
               { 
                 order, 

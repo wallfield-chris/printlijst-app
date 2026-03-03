@@ -357,6 +357,8 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
 
           // === Maak printjob ===
           const orderDate = order.createDate ? new Date(order.createDate) : new Date()
+          // SKU 1041 = custom schilderij → bestand moet nog gemaakt worden
+          const isCustomFile = product.sku?.startsWith("1041") || false
           await prisma.printJob.create({
             data: {
               orderUuid: order.uuid || "",
@@ -375,6 +377,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
               printStatus: "pending",
               orderStatus: order.status,
               backorder: order.status === "backorder",
+              missingFile: isCustomFile,
               receivedAt: orderDate,
               webhookData: JSON.stringify({ order, product }, null, 2),
             },

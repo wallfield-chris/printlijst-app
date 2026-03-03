@@ -136,9 +136,20 @@ export async function GET() {
 
     results.push(`✅ ${retagged} van ${allJobs.length} actieve printjobs ge-retagd`)
 
+    // === SKU 1041 = custom schilderij → missingFile ===
+    const customJobs = await prisma.printJob.updateMany({
+      where: {
+        sku: { startsWith: "1041" },
+        missingFile: false,
+        printStatus: { not: "completed" },
+      },
+      data: { missingFile: true },
+    })
+    results.push(`✅ ${customJobs.count} printjobs met SKU 1041* op missing file gezet`)
+
     return NextResponse.json({
       success: true,
-      message: "ML tag rules, list views aangemaakt en printjobs ge-retagd",
+      message: "ML tag rules, list views aangemaakt, printjobs ge-retagd, 1041 missing file gezet",
       details: results,
     })
   } catch (error: any) {

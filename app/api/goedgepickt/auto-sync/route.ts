@@ -219,6 +219,8 @@ export async function GET(request: NextRequest) {
 
         // Order datum
         const orderDate = (order as any).createDate ? new Date((order as any).createDate) : new Date()
+        // SKU 1041 = custom schilderij → bestand moet nog gemaakt worden
+        const isCustomFile = product.sku?.startsWith("1041") || false
 
         // Maak printjob
         await prisma.printJob.create({
@@ -239,6 +241,7 @@ export async function GET(request: NextRequest) {
             printStatus: "pending",
             orderStatus: order.status,
             backorder: true,
+            missingFile: isCustomFile,
             receivedAt: orderDate,
             webhookData: JSON.stringify({ order, product, autoSync: true }, null, 2),
           },
