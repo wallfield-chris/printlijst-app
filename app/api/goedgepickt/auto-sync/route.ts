@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
     // Haal ALLEEN pagina 1 op (max 15 nieuwste orders) — lightweight!
-    const daysBack = 14
+    const daysBack = 30
     const createdAfter = new Date()
     createdAfter.setDate(createdAfter.getDate() - daysBack)
     const createdAfterStr = createdAfter.toISOString().split("T")[0]
@@ -79,10 +79,11 @@ export async function GET(request: NextRequest) {
     const backorderOrders = orders.filter((o) => o.status === "backorder")
 
     // Bouw een set van bestaande orderUuid+productUuid/sku combinaties
+    // Inclusief stock_covered om re-import van door voorraad gedekte producten te voorkomen
     const existingJobKeys = new Set<string>()
     const existingJobs = await prisma.printJob.findMany({
-      where: { printStatus: { in: ["pending", "in_progress"] } },
-      select: { orderUuid: true, productUuid: true, sku: true },
+      where: { printStatus: { in: ["pending", "in_progress", "stock_covered"] } },
+      select: { orderUuid: true, productUuid: true, sku: true, productName: true },
     })
     for (const job of existingJobs) {
       if (job.orderUuid && job.productUuid) {
@@ -90,6 +91,9 @@ export async function GET(request: NextRequest) {
       }
       if (job.orderUuid && job.sku) {
         existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+      }
+      if (job.orderUuid && job.productName) {
+        existingJobKeys.add(`${job.orderUuid}::name::${job.productName}`)
       }
     }
 
@@ -117,7 +121,8 @@ export async function GET(request: NextRequest) {
         // Check of dit specifieke product al geïmporteerd is
         const dupKeyProduct = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
         const dupKeySku = product.sku ? `${order.uuid}::sku::${product.sku}` : null
-        if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku))) {
+        const dupKeyName = `${order.uuid}::name::${product.productName || 'unknown'}`
+        if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku)) || existingJobKeys.has(dupKeyName)) {
           skipped++
           continue
         }
@@ -138,8 +143,8 @@ export async function GET(request: NextRequest) {
         }
         if (isExcluded) continue
 
-        // Check stock — alleen skippen als we POSITIEF bevestigen dat het op voorraad is
-        // Order is al gefilterd op orderstatus=backorder, dus bij twijfel → importeren
+        // Product details ophalen voor supplierSku en afbeelding
+        // Voorraad-check wordt NA de import gedaan (DB-based allocatie)
         let supplierSku: string | null = null
         let imageUrl: string | null = null
 
@@ -147,9 +152,7 @@ export async function GET(request: NextRequest) {
           try {
             const details = await api.getProduct(product.productUuid)
             if (details) {
-              const freeStock = details.stock?.freeStock ?? (details as any).freeStock ?? null
-              if (freeStock !== null && freeStock >= 0) continue // Op voorraad → niet printen
-
+              // Product details voor supplierSku en afbeelding
               if (details.supplier?.supplierSku) supplierSku = details.supplier.supplierSku
               else if ((details as any).supplierSku) supplierSku = (details as any).supplierSku
 
@@ -157,10 +160,8 @@ export async function GET(request: NextRequest) {
                 imageUrl = details.picture
               }
             }
-            // details === null → API faalde, maar order IS backorder → importeren
           } catch {
-            // Stock check mislukt → order IS backorder → importeren
-            console.log(`⚠️ [auto-sync] Stock check mislukt voor ${product.sku || product.productName} → importeren (backorder)`)
+            console.log(`⚠️ [auto-sync] Product details ophalen mislukt voor ${product.sku || product.productName}`)
           }
         }
 
@@ -252,6 +253,7 @@ export async function GET(request: NextRequest) {
         // Registreer in lookup set
         if (dupKeyProduct) existingJobKeys.add(dupKeyProduct)
         if (dupKeySku) existingJobKeys.add(dupKeySku)
+        existingJobKeys.add(dupKeyName)
       }
     }
 
@@ -262,9 +264,84 @@ export async function GET(request: NextRequest) {
       console.log(`🔄 Auto-sync: ${imported} nieuwe printjobs geïmporteerd (${backorderOrders.length} orders gecheckt)`)
     }
 
+    // === DB-BASED VOORRAAD-ALLOCATIE ===
+    // Na import: evalueer voorraad voor ALLE actieve printjobs.
+    // Per productUuid: haal totalStock op, sorteer jobs op datum (oudste eerst),
+    // markeer de oudste `totalStock` jobs als stock_covered, rest als pending.
+    let stockCovered = 0
+    let stockUncovered = 0
+    try {
+      const allActiveJobs = await prisma.printJob.findMany({
+        where: {
+          productUuid: { not: null },
+          printStatus: { in: ["pending", "in_progress", "stock_covered"] },
+        },
+        select: { id: true, productUuid: true, receivedAt: true, printStatus: true, sku: true, orderUuid: true },
+        orderBy: { receivedAt: "asc" },
+      })
+
+      // Groepeer per productUuid
+      const jobsByProduct = new Map<string, typeof allActiveJobs>()
+      for (const job of allActiveJobs) {
+        if (!job.productUuid) continue
+        if (!jobsByProduct.has(job.productUuid)) jobsByProduct.set(job.productUuid, [])
+        jobsByProduct.get(job.productUuid)!.push(job)
+      }
+
+      for (const [productUuid, jobs] of jobsByProduct) {
+        let totalStock = 0
+        let unlimited = false
+        try {
+          const details = await api.getProduct(productUuid)
+          if (details) {
+            const stock = (details as any).stock || {}
+            totalStock = stock.totalStock ?? 0
+            unlimited = stock.unlimitedStock ?? false
+          }
+        } catch { /* skip */ }
+
+        if (totalStock <= 0 && !unlimited) {
+          // Geen voorraad: zorg dat stock_covered jobs terug naar pending gaan
+          for (const job of jobs) {
+            if (job.printStatus === "stock_covered") {
+              await prisma.printJob.update({ where: { id: job.id }, data: { printStatus: "pending" } })
+              stockUncovered++
+            }
+          }
+          continue
+        }
+
+        const coveredCount = unlimited ? jobs.length : Math.min(totalStock, jobs.length)
+        for (let i = 0; i < jobs.length; i++) {
+          const job = jobs[i]
+          if (i < coveredCount) {
+            // Gedekt door voorraad
+            if (job.printStatus === "pending") {
+              await prisma.printJob.update({ where: { id: job.id }, data: { printStatus: "stock_covered" } })
+              stockCovered++
+            }
+          } else {
+            // Niet gedekt: moet geprint worden
+            if (job.printStatus === "stock_covered") {
+              await prisma.printJob.update({ where: { id: job.id }, data: { printStatus: "pending" } })
+              stockUncovered++
+            }
+          }
+        }
+      }
+
+      if (stockCovered > 0 || stockUncovered > 0) {
+        console.log(`📦 [auto-sync] Voorraad-allocatie: ${stockCovered} stock_covered, ${stockUncovered} terug naar pending`)
+      }
+    } catch (err) {
+      console.error(`⚠️ [auto-sync] Voorraad-allocatie fout:`, err)
+    }
+
     return NextResponse.json({
       success: true,
       ...lastSyncResult,
+      stockCovered,
+      stockUncovered,
     })
   } catch (error: any) {
     console.error("❌ Auto-sync error:", error.message)

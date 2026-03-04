@@ -151,7 +151,11 @@ export async function GET(request: NextRequest) {
               console.log(
                 `   ✅ [auto-check] Product ${job.sku} al verzonden (picked: ${picked}/${needed}) → VERWIJDERD`
               )
+              continue
             }
+
+            // Voorraad-allocatie wordt door auto-sync afgehandeld (elke 2 min)
+            // check-completed focust alleen op completed orders en gepickte producten
           }
         }
       } catch (err) {

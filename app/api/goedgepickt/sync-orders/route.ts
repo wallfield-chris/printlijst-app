@@ -89,7 +89,7 @@ type SendFn = (data: Record<string, any>) => void
 const noopSend: SendFn = () => {}
 
 async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
-  send({ type: "start", step: 0, totalSteps: 4, message: "Synchronisatie voorbereiden..." })
+  send({ type: "start", step: 0, totalSteps: 5, message: "Synchronisatie voorbereiden..." })
 
   // === Setup: API key + rules ===
   const apiKeySetting = await prisma.setting.findUnique({
@@ -120,13 +120,22 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
   // === Reset mode: verwijder alle pending jobs ===
   let deletedCount = 0
   if (resetMode) {
-    send({ type: "progress", step: 1, totalSteps: 4, message: "Bestaande jobs verwijderen..." })
+    send({ type: "progress", step: 1, totalSteps: 5, message: "Bestaande jobs verwijderen..." })
     const result = await prisma.printJob.deleteMany({
       where: { printStatus: "pending" },
     })
       deletedCount = result.count
       console.log(`🗑️  Reset mode: ${deletedCount} pending printjobs verwijderd`)
-      send({ type: "progress", step: 1, totalSteps: 4, message: `${deletedCount} bestaande jobs verwijderd` })
+      send({ type: "progress", step: 1, totalSteps: 5, message: `${deletedCount} bestaande jobs verwijderd` })
+    }
+
+    // === Reset stock_covered → pending zodat we opnieuw kunnen evalueren ===
+    const resetCoveredResult = await prisma.printJob.updateMany({
+      where: { printStatus: "stock_covered" },
+      data: { printStatus: "pending" },
+    })
+    if (resetCoveredResult.count > 0) {
+      console.log(`🔄 ${resetCoveredResult.count} stock_covered printjobs teruggezet naar pending voor herevaluatie`)
     }
 
     // === Haal orders op uit GoedGepickt ===
@@ -142,7 +151,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     console.log(`📅 Fetching orders created after ${createdAfterStr} (${resetMode ? "RESET" : "incremental"})`)
       
     // Stap 2: Haal eerste pagina op
-    send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: "Pagina 1 ophalen..." })
+    send({ type: "progress", step: 2, totalSteps: 5, message: "GoedGepickt orders ophalen...", detail: "Pagina 1 ophalen..." })
     console.log(`🔗 Calling getOrders with: orderstatus=backorder, createdAfter=${createdAfterStr}, page=1`)
     let firstPageOrders: any[]
     try {
@@ -161,7 +170,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     const totalPages = paginationInfo?.lastPage || 1
     
     console.log(`📊 Found ${paginationInfo?.totalItems || firstPageOrders.length} orders across ${totalPages} pages`)
-    send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: `Pagina 1 van ~${totalPages}` })
+    send({ type: "progress", step: 2, totalSteps: 5, message: "GoedGepickt orders ophalen...", detail: `Pagina 1 van ~${totalPages}` })
 
     // Haal alle pagina's op
     const allOrders: any[] = []
@@ -170,7 +179,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
         allOrders.push(...firstPageOrders)
         continue
       }
-      send({ type: "progress", step: 2, totalSteps: 4, message: "GoedGepickt orders ophalen...", detail: `Pagina ${totalPages - page + 1} van ~${totalPages}` })
+      send({ type: "progress", step: 2, totalSteps: 5, message: "GoedGepickt orders ophalen...", detail: `Pagina ${totalPages - page + 1} van ~${totalPages}` })
       try {
         const pageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page })
         if (pageOrders.length > 0) allOrders.push(...pageOrders)
@@ -182,18 +191,19 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     // Stap 3: Filter op echte backorder status
     const orders = allOrders.filter(o => o.status === "backorder")
     console.log(`🔍 ${allOrders.length} opgehaald, ${orders.length} zijn echte backorders`)
-    send({ type: "progress", step: 3, totalSteps: 4, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
+    send({ type: "progress", step: 3, totalSteps: 5, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
 
-    // === Dedup lookup: bestaande actieve jobs ===
+    // === Dedup lookup: bestaande actieve jobs (inclusief stock_covered om re-import te voorkomen) ===
     const existingJobKeys = new Set<string>()
     if (!resetMode) {
       const existingJobs = await prisma.printJob.findMany({
-        where: { printStatus: { in: ["pending", "in_progress"] } },
-        select: { orderUuid: true, productUuid: true, sku: true },
+        where: { printStatus: { in: ["pending", "in_progress", "stock_covered"] } },
+        select: { orderUuid: true, productUuid: true, sku: true, productName: true },
       })
       for (const job of existingJobs) {
         if (job.orderUuid && job.productUuid) existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
         if (job.orderUuid && job.sku) existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+        if (job.orderUuid && job.productName) existingJobKeys.add(`${job.orderUuid}::name::${job.productName}`)
       }
     }
 
@@ -239,20 +249,22 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
       return null
     }
 
+    // === Voorraad-allocatie wordt NA de import gedaan (stap 5) ===
+    // Eerst alle orders importeren, daarna DB-based stock allocatie
+    send({ type: "progress", step: 3, totalSteps: 5, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
+
     // === Verwerk orders ===
     let totalImported = 0
     let totalDuplicates = 0
     let totalExcluded = 0
-    let totalInStock = 0
     let totalPicked = 0
-    let totalStockUnverified = 0
     const errors: { orderUuid: string; error: string }[] = []
 
     for (let orderIdx = 0; orderIdx < orders.length; orderIdx++) {
       const order = orders[orderIdx]
       // Elke 5 orders een progress update
       if (orderIdx % 5 === 0) {
-        send({ type: "progress", step: 3, totalSteps: 4, message: "Orders verwerken...", detail: `Order ${orderIdx + 1} van ${orders.length} (${totalImported} geïmporteerd)` })
+        send({ type: "progress", step: 4, totalSteps: 5, message: "Orders verwerken...", detail: `Order ${orderIdx + 1} van ${orders.length} (${totalImported} geïmporteerd)` })
       }
       try {
         if (!order.products || order.products.length === 0) continue
@@ -261,10 +273,11 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
           // Skip parent products
           if (product.type === "parent") continue
 
-          // === Dedup check ===
+          // === Dedup check (inclusief productName als fallback) ===
           const dupKey1 = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
           const dupKey2 = product.sku ? `${order.uuid}::sku::${product.sku}` : null
-          if ((dupKey1 && existingJobKeys.has(dupKey1)) || (dupKey2 && existingJobKeys.has(dupKey2))) {
+          const dupKey3 = `${order.uuid}::name::${product.productName || 'unknown'}`
+          if ((dupKey1 && existingJobKeys.has(dupKey1)) || (dupKey2 && existingJobKeys.has(dupKey2)) || existingJobKeys.has(dupKey3)) {
             totalDuplicates++
             continue
           }
@@ -287,29 +300,13 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
             continue
           }
 
-          // === Stock check + product details (1 API call, gecached) ===
-          // BELANGRIJK: deze orders zijn AL gefilterd op orderstatus=backorder
-          // We skippen ALLEEN als we POSITIEF kunnen bevestigen dat het product op voorraad is
-          // Als stock check faalt → toch importeren (het IS een backorder order)
+          // === Product details ophalen ===
           let supplierSku: string | null = null
           let imageUrl: string | null = null
           
           if (product.productUuid) {
             const details = await getProductCached(product.productUuid)
             if (details) {
-              // Stock check: freeStock >= 0 = op voorraad → niet importeren
-              const freeStock = details.stock?.freeStock ?? (details as any).freeStock ?? null
-              if (freeStock !== null && freeStock >= 0) {
-                totalInStock++
-                console.log(`📦 Op voorraad: ${product.sku || product.productName} (freeStock: ${freeStock})`)
-                continue
-              }
-              
-              if (freeStock === null) {
-                totalStockUnverified++
-                console.log(`⚠️ Geen stock data voor ${product.sku || product.productName} → importeren (backorder order)`)
-              }
-
               // Supplier SKU
               supplierSku = details.supplier?.supplierSku || (details as any).supplierSku || null
 
@@ -317,13 +314,8 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
               if (details.picture && !details.picture.includes("image_placeholder")) {
                 imageUrl = details.picture
               }
-            } else {
-              // getProduct faalde na retries — importeer toch (order IS backorder)
-              totalStockUnverified++
-              console.log(`⚠️ Product details niet beschikbaar voor ${product.sku || product.productName} → importeren (backorder order)`)
             }
           }
-          // Geen productUuid → importeer ook (het is een backorder order)
 
           // === Tags ===
           const appliedTags: string[] = []
@@ -386,6 +378,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
           totalImported++
           if (dupKey1) existingJobKeys.add(dupKey1)
           if (dupKey2) existingJobKeys.add(dupKey2)
+          existingJobKeys.add(dupKey3)
         }
       } catch (error: any) {
         console.error(`❌ Error processing order ${order.uuid}:`, error)
@@ -393,7 +386,100 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
       }
     }
 
-    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked, ${totalStockUnverified} stock-onbekend`)
+    // === STAP 4b: DUPLICATEN OPRUIMEN ===
+    // Verwijder dubbele printjobs (zelfde orderUuid + productName, behoud oudste)
+    let duplicatesRemoved = 0
+    try {
+      const allJobs = await prisma.printJob.findMany({
+        where: { printStatus: { in: ["pending", "stock_covered"] } },
+        select: { id: true, orderUuid: true, productUuid: true, productName: true, receivedAt: true },
+        orderBy: { receivedAt: "asc" },
+      })
+
+      const seenKeys = new Map<string, string>() // key → oldest job id
+      const duplicateIds: string[] = []
+
+      for (const job of allJobs) {
+        // Dedup key: orderUuid + productName (meest betrouwbaar, ook voor producten zonder UUID)
+        const key = `${job.orderUuid}::${job.productName}`
+        if (seenKeys.has(key)) {
+          duplicateIds.push(job.id) // dit is een nieuwere duplicate
+        } else {
+          seenKeys.set(key, job.id)
+        }
+      }
+
+      if (duplicateIds.length > 0) {
+        const result = await prisma.printJob.deleteMany({
+          where: { id: { in: duplicateIds } },
+        })
+        duplicatesRemoved = result.count
+        console.log(`🧹 ${duplicatesRemoved} dubbele printjobs verwijderd`)
+        send({ type: "progress", step: 4, totalSteps: 5, message: `${duplicatesRemoved} duplicaten opgeruimd`, detail: "" })
+      }
+    } catch (err) {
+      console.error(`⚠️ Duplicaten opruimen gefaald:`, err)
+    }
+
+    // === STAP 5: DB-BASED VOORRAAD-ALLOCATIE ===
+    // Nu alle orders geïmporteerd zijn, evalueer voorraad op basis van DB state.
+    // Per productUuid: haal totalStock op, sorteer jobs op datum (oudste eerst),
+    // markeer de oudste `totalStock` jobs als stock_covered.
+    send({ type: "progress", step: 5, totalSteps: 5, message: "Voorraad-allocatie berekenen...", detail: "Voorraad controleren" })
+    
+    let totalInStock = 0
+    let stockCheckedProducts = 0
+
+    // Haal alle pending/in_progress printjobs op, gegroepeerd per productUuid
+    const allActiveJobs = await prisma.printJob.findMany({
+      where: {
+        productUuid: { not: null },
+        printStatus: { in: ["pending", "in_progress"] },
+      },
+      select: { id: true, productUuid: true, receivedAt: true, printStatus: true, sku: true, productName: true, orderUuid: true },
+      orderBy: { receivedAt: "asc" }, // oudste eerst
+    })
+
+    // Groepeer per productUuid
+    const jobsByProduct = new Map<string, typeof allActiveJobs>()
+    for (const job of allActiveJobs) {
+      if (!job.productUuid) continue
+      if (!jobsByProduct.has(job.productUuid)) jobsByProduct.set(job.productUuid, [])
+      jobsByProduct.get(job.productUuid)!.push(job)
+    }
+
+    console.log(`📊 Voorraad-check: ${jobsByProduct.size} unieke producten met actieve printjobs`)
+
+    for (const [productUuid, jobs] of jobsByProduct) {
+      const product = await getProductCached(productUuid)
+      if (!product) continue
+
+      const stockInfo = GoedGepicktAPI.extractStockInfo(product)
+      stockCheckedProducts++
+
+      if (stockInfo.totalStock <= 0 && !stockInfo.unlimitedStock) continue // Geen voorraad
+
+      // Jobs zijn al gesorteerd op receivedAt (oudste eerst)
+      // De oudste `totalStock` jobs zijn gedekt door voorraad
+      const stockToAllocate = stockInfo.unlimitedStock ? jobs.length : stockInfo.totalStock
+      const coveredCount = Math.min(stockToAllocate, jobs.length)
+
+      for (let i = 0; i < coveredCount; i++) {
+        const job = jobs[i]
+        if (job.printStatus === "in_progress") continue // in_progress niet aanpassen
+        
+        await prisma.printJob.update({
+          where: { id: job.id },
+          data: { printStatus: "stock_covered" },
+        })
+        totalInStock++
+        console.log(`📦 stock_covered: ${job.sku || job.productName} (order ${job.orderUuid}) — ${stockInfo.totalStock} op voorraad`)
+      }
+    }
+
+    console.log(`📊 Voorraad-allocatie: ${totalInStock} printjobs gemarkeerd als stock_covered (${stockCheckedProducts} producten gecheckt)`)
+
+    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked, ${duplicatesRemoved} duplicates removed`)
 
     const resultData = {
       success: true,
@@ -404,7 +490,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
         excluded: totalExcluded,
         inStock: totalInStock,
         picked: totalPicked,
-        stockUnverified: totalStockUnverified,
+        duplicatesRemoved,
         errors: errors.length,
         ...(resetMode ? { deletedBefore: deletedCount } : {}),
       },
@@ -415,11 +501,12 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
         createdAfter: createdAfterStr,
         totalPages,
         productCacheSize: productCache.size,
+        stockCheckedProducts,
       },
       errors: errors.length > 0 ? errors : undefined,
     }
 
-    send({ type: "done", step: 4, totalSteps: 4, message: `${totalImported} printjobs geïmporteerd`, result: resultData.stats })
+    send({ type: "done", step: 5, totalSteps: 5, message: `${totalImported} printjobs geïmporteerd${totalInStock > 0 ? `, ${totalInStock} verborgen (voorraad)` : ''}`, result: resultData.stats })
 
     return resultData
 }
