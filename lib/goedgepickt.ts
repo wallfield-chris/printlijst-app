@@ -113,6 +113,73 @@ export class GoedGepicktAPI {
   }
 
   /**
+   * Haal voorraad-info op voor een product.
+   * 
+   * Voorraad-allocatie logica:
+   * - totalStock = fysieke items aanwezig
+   * - reservedStock = aantal gereserveerd voor orders
+   * - freeStock = totalStock - reservedStock
+   * 
+   * Als freeStock >= 0: alle orders zijn gedekt door voorraad → niet printen
+   * Als freeStock < 0: er zijn |freeStock| ongedekte orders die geprint moeten worden
+   * De OUDSTE orders krijgen de voorraad; de NIEUWSTE zijn ongedekt.
+   */
+  async getProductTotalStock(productUuid: string): Promise<{
+    totalStock: number
+    freeStock: number
+    reservedStock: number
+    unlimitedStock: boolean
+    debug: string
+  }> {
+    try {
+      const productDetails = await this.getProduct(productUuid)
+      if (!productDetails) {
+        return { totalStock: 0, freeStock: 0, reservedStock: 0, unlimitedStock: false, debug: "Product niet gevonden via API" }
+      }
+
+      const stock = productDetails.stock || {}
+      const unlimitedStock = stock.unlimitedStock ?? false
+      const totalStock = stock.totalStock ?? 0
+      const freeStock = stock.freeStock ?? 0
+      const reservedStock = stock.reservedStock ?? 0
+
+      const debug = `totalStock=${totalStock}, freeStock=${freeStock}, reservedStock=${reservedStock}, unlimited=${unlimitedStock}`
+      console.log(`📊 [stock] Product ${productUuid}: ${debug}`)
+
+      return {
+        totalStock: unlimitedStock ? 999999 : totalStock,
+        freeStock: unlimitedStock ? 999999 : freeStock,
+        reservedStock,
+        unlimitedStock,
+        debug,
+      }
+    } catch (error) {
+      console.error(`❌ [stock] Error voor ${productUuid}:`, error)
+      return { totalStock: 0, freeStock: 0, reservedStock: 0, unlimitedStock: false, debug: `Error: ${error}` }
+    }
+  }
+
+  /**
+   * Extraheer voorraad-info uit een al opgehaald product object.
+   * Handig voor sync-orders waar producten al gecached zijn.
+   */
+  static extractStockInfo(product: any): {
+    totalStock: number
+    freeStock: number
+    unlimitedStock: boolean
+  } {
+    const stock = product?.stock || {}
+    const unlimitedStock = stock.unlimitedStock ?? false
+    const totalStock = stock.totalStock ?? 0
+    const freeStock = stock.freeStock ?? 0
+    return {
+      totalStock: unlimitedStock ? 999999 : totalStock,
+      freeStock: unlimitedStock ? 999999 : freeStock,
+      unlimitedStock,
+    }
+  }
+
+  /**
    * Test de API connectie
    */
   async testConnection(): Promise<boolean> {

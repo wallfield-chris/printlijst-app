@@ -196,20 +196,8 @@ async function runSyncStatusesLogic(send: SendFn = noopSend) {
             continue
           }
 
-          // Stock check: als freeStock >= 0 is het product op voorraad → verwijderen
-          try {
-            const productDetails = await api.getProduct(job.productUuid)
-            if (productDetails) {
-              const freeStock = productDetails.stock?.freeStock ?? (productDetails as any).freeStock ?? null
-              if (freeStock !== null && freeStock >= 0) {
-                await prisma.printJob.delete({ where: { id: job.id } })
-                deletedCount++
-                console.log(`   📦 Op voorraad (freeStock: ${freeStock}), verwijderd: ${job.sku}`)
-              }
-            }
-          } catch {
-            // Stock check mislukt → job behouden
-          }
+          // Voorraad-allocatie wordt afgehandeld door sync-orders (die direct hierna draait)
+          // sync-statuses doet alleen status + picked checks
         }
       }
     } catch (err) {

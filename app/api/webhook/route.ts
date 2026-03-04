@@ -599,7 +599,6 @@ export async function POST(request: NextRequest) {
         let isBackorder = false
         let supplierSku: string | null = null
         let imageUrl: string | null = null
-        let freeStock: number | null = null
 
         // Check 1: product al gepickt? Dan niet printen
         if (product.pickedQuantity && product.pickedQuantity >= (product.productQuantity || 1)) {
@@ -608,6 +607,19 @@ export async function POST(request: NextRequest) {
         }
         
         if (product.productUuid) {
+          // Product details ophalen voor supplierSku en afbeelding
+          // Voorraad-allocatie wordt door auto-sync afgehandeld (elke 2 min)
+          // Webhook importeert altijd → auto-sync zal stock_covered markeren indien nodig
+          try {
+            const productDetails = await api.getProduct(product.productUuid)
+            if (productDetails) {
+              isBackorder = true
+            }
+          } catch (error) {
+            console.warn(`⚠️  Product details ophalen mislukt voor ${product.productUuid}`)
+          }
+
+          // Haal product details op voor supplierSku en afbeelding
           try {
             const productDetails = await api.getProduct(product.productUuid)
             if (productDetails) {
@@ -625,28 +637,10 @@ export async function POST(request: NextRequest) {
                 imageUrl = productDetails.picture
                 console.log(`   🖼️  Afbeelding: ${imageUrl}`)
               }
-              
-              // Check voorraad
-              if (productDetails.stock) {
-                freeStock = productDetails.stock.freeStock ?? 0
-                isBackorder = freeStock < 0
-                console.log(`   📊 Voorraad: ${freeStock} (backorder: ${isBackorder})`)
-              }
             }
           } catch (error) {
             console.warn(`⚠️  Kon product details niet ophalen voor ${product.productUuid}`)
           }
-        }
-
-        // Check 2: freeStock >= 0 = voorraad aanwezig of gereserveerd → niet in backorder → niet printen
-        // freeStock < 0 = écht in backorder (meer besteld dan er ooit is) → wel printen
-        // freeStock === null = stock niet te verifiëren → WEL printen (order is backorder, trust dat)
-        if (freeStock !== null && freeStock >= 0) {
-          console.log(`   📦 Op voorraad, skip: ${product.sku || product.productName} (freeStock: ${freeStock})`)
-          continue
-        }
-        if (freeStock === null) {
-          console.log(`   ⚠️ Stock niet te verifiëren voor ${product.sku || product.productName} → importeren (backorder order)`)
         }
 
         // Bepaal priority op basis van tags
