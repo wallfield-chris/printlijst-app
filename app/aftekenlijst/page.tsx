@@ -179,6 +179,12 @@ export default function AftekenlijstPage() {
                 >
                   Data
                 </Link>
+                <Link
+                  href="/aftekenlijst"
+                  className="px-3 py-1.5 text-sm font-medium rounded-md bg-blue-100 text-blue-700"
+                >
+                  Aftekenlijst
+                </Link>
               </nav>
             )}
           </div>
@@ -220,9 +226,12 @@ export default function AftekenlijstPage() {
             >
               Data
             </Link>
-            <span className="flex-1 text-center px-2 py-1.5 text-xs font-medium rounded-md bg-blue-100 text-blue-700">
-              Aftekenlijst
-            </span>
+              <Link
+                href="/aftekenlijst"
+                className="flex-1 text-center px-2 py-1.5 text-xs font-medium rounded-md bg-blue-100 text-blue-700"
+              >
+                Aftekenlijst
+              </Link>
           </div>
         )}
       </header>

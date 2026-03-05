@@ -656,7 +656,7 @@ export default function PrintJobsPage() {
                 Data
               </Link>
               <Link
-                href="/printjobs/aftekenlijst"
+                href="/aftekenlijst"
                 className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               >
                 Aftekenlijst
