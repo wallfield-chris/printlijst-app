@@ -7,17 +7,21 @@ const publicPaths = [
   "/api/checklist"
 ]
 
-export async function middleware(request: Request) {
-  const url = new URL(request.url)
+export default auth((req) => {
+  const { pathname } = req.nextUrl
 
-  // Publieke paden doorlaten zonder auth
-  if (publicPaths.some(path => url.pathname.startsWith(path))) {
+  // Publieke paden altijd doorlaten
+  if (publicPaths.some(path => pathname.startsWith(path))) {
     return NextResponse.next()
   }
 
-  // Alle andere gematchte routes vereisen auth
-  return (auth as any)(request)
-}
+  // Beveiligde paden: redirect naar login als niet ingelogd
+  if (!req.auth) {
+    return NextResponse.redirect(new URL("/login", req.nextUrl))
+  }
+
+  return NextResponse.next()
+})
 
 export const config = {
   matcher: [
