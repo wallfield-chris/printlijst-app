@@ -1,6 +1,5 @@
 "use client"
 
-import { useSession, signOut } from "next-auth/react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
 
@@ -52,8 +51,6 @@ function checkedCount(entry: ChecklistEntry): number {
 }
 
 export default function AftekenlijstPage() {
-  const { data: session, status } = useSession()
-  const isLoggedIn = status === "authenticated"
   const [entries, setEntries] = useState<ChecklistEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedDate, setExpandedDate] = useState<string | null>(null)
@@ -162,78 +159,14 @@ export default function AftekenlijstPage() {
       {/* Header — compact op mobiel */}
       <header className="bg-white shadow">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3 sm:gap-6">
-            <h1 className="text-lg sm:text-2xl font-bold text-gray-900">📋 Aftekenlijst</h1>
-            {/* Nav alleen tonen als ingelogd */}
-            {isLoggedIn && (
-              <nav className="hidden sm:flex gap-1">
-                <Link
-                  href="/printjobs"
-                  className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                >
-                  Printlijst
-                </Link>
-                <Link
-                  href="/data"
-                  className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                >
-                  Data
-                </Link>
-                <Link
-                  href="/aftekenlijst"
-                  className="px-3 py-1.5 text-sm font-medium rounded-md bg-blue-100 text-blue-700"
-                >
-                  Aftekenlijst
-                </Link>
-              </nav>
-            )}
-          </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            {isLoggedIn ? (
-              <>
-                <span className="hidden sm:inline text-sm text-gray-600">
-                  {session?.user?.name}
-                </span>
-                <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="px-3 py-1.5 text-sm text-red-600 hover:text-red-800"
-                >
-                  Uitloggen
-                </button>
-              </>
-            ) : (
-              <Link
-                href="/login"
-                className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800"
-              >
-                Inloggen
-              </Link>
-            )}
-          </div>
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900">📋 Aftekenlijst</h1>
+          <Link
+            href="/login"
+            className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800"
+          >
+            Inloggen
+          </Link>
         </div>
-        {/* Mobiel nav bar voor ingelogde gebruikers */}
-        {isLoggedIn && (
-          <div className="sm:hidden border-t border-gray-100 px-3 py-2 flex gap-2">
-            <Link
-              href="/printjobs"
-              className="flex-1 text-center px-2 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-100"
-            >
-              Printlijst
-            </Link>
-            <Link
-              href="/data"
-              className="flex-1 text-center px-2 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:bg-gray-100"
-            >
-              Data
-            </Link>
-              <Link
-                href="/aftekenlijst"
-                className="flex-1 text-center px-2 py-1.5 text-xs font-medium rounded-md bg-blue-100 text-blue-700"
-              >
-                Aftekenlijst
-              </Link>
-          </div>
-        )}
       </header>
 
       <main className="max-w-4xl mx-auto px-2 sm:px-6 lg:px-8 py-4 sm:py-8">
