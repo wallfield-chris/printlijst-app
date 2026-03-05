@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 
       const entry = await prisma.checklistEntry.upsert({
         where: { date },
-        create: createData,
+        create: createData as any,
         update: updateData,
       })
 
