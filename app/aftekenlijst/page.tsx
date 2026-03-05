@@ -53,8 +53,10 @@ function checkedCount(entry: ChecklistEntry): number {
 export default function AftekenlijstPage() {
   const [entries, setEntries] = useState<ChecklistEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [expandedDate, setExpandedDate] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
 
   // Laad checklist data direct (geen login vereist)
@@ -71,18 +73,30 @@ export default function AftekenlijstPage() {
 
   async function fetchEntries() {
     try {
+      setError(null)
       const res = await fetch("/api/checklist")
-      if (res.ok) {
-        const data = await res.json()
-        setEntries(data)
-        const notesMap: Record<string, string> = {}
-        data.forEach((e: ChecklistEntry) => {
-          if (e.notes) notesMap[e.date] = e.notes
-        })
-        setNotes(notesMap)
+      if (!res.ok) {
+        const text = await res.text()
+        console.error("API error:", res.status, text)
+        setError(`Fout bij laden (${res.status}). Probeer de pagina te herladen.`)
+        return
       }
+      const contentType = res.headers.get("content-type") || ""
+      if (!contentType.includes("application/json")) {
+        console.error("Unexpected content type:", contentType)
+        setError("Onverwachte response van server. Probeer de pagina te herladen.")
+        return
+      }
+      const data = await res.json()
+      setEntries(data)
+      const notesMap: Record<string, string> = {}
+      data.forEach((e: ChecklistEntry) => {
+        if (e.notes) notesMap[e.date] = e.notes
+      })
+      setNotes(notesMap)
     } catch (err) {
       console.error("Error loading checklist:", err)
+      setError("Kan geen verbinding maken met de server.")
     } finally {
       setLoading(false)
     }
@@ -90,24 +104,30 @@ export default function AftekenlijstPage() {
 
   async function toggleItem(date: string, field: string, currentValue: boolean) {
     setSaving(true)
+    setSaveError(null)
     try {
       const res = await fetch("/api/checklist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date, field, value: !currentValue }),
       })
-      if (res.ok) {
-        const updated = await res.json()
-        setEntries((prev) => {
-          const existing = prev.find((e) => e.date === date)
-          if (existing) {
-            return prev.map((e) => (e.date === date ? updated : e))
-          }
-          return [updated, ...prev].sort((a, b) => b.date.localeCompare(a.date))
-        })
+      if (!res.ok) {
+        const text = await res.text()
+        console.error("Toggle error:", res.status, text)
+        setSaveError("Opslaan mislukt. Probeer opnieuw.")
+        return
       }
+      const updated = await res.json()
+      setEntries((prev) => {
+        const existing = prev.find((e) => e.date === date)
+        if (existing) {
+          return prev.map((e) => (e.date === date ? updated : e))
+        }
+        return [updated, ...prev].sort((a, b) => b.date.localeCompare(a.date))
+      })
     } catch (err) {
       console.error("Error toggling item:", err)
+      setSaveError("Geen verbinding. Probeer opnieuw.")
     } finally {
       setSaving(false)
     }
@@ -151,6 +171,24 @@ export default function AftekenlijstPage() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+        <div className="text-center bg-white rounded-xl shadow p-6 max-w-sm w-full">
+          <div className="text-4xl mb-3">⚠️</div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Er ging iets mis</h2>
+          <p className="text-sm text-red-600 mb-4">{error}</p>
+          <button
+            onClick={() => { setLoading(true); setError(null); fetchEntries(); }}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+          >
+            Opnieuw proberen
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const today = getTodayStr()
   const days = getLast30Days()
 
@@ -170,6 +208,14 @@ export default function AftekenlijstPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-2 sm:px-6 lg:px-8 py-4 sm:py-8">
+        {/* Foutmelding bij opslaan */}
+        {saveError && (
+          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-red-700">{saveError}</span>
+            <button onClick={() => setSaveError(null)} className="text-red-500 hover:text-red-700 text-lg font-bold ml-2">&times;</button>
+          </div>
+        )}
+
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
             <p className="text-sm text-gray-500">
