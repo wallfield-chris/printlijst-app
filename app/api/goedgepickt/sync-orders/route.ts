@@ -208,22 +208,17 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     }
 
     // === Product detail cache (voorkomt dubbele API calls) ===
-    // Alleen succesvolle resultaten cachen — null (rate limit/error) wordt NIET gecacht
     const productCache = new Map<string, any>()
-    const API_DELAY_MS = 250 // delay tussen product API calls om rate limiting te voorkomen
+    const API_DELAY_MS = 400 // delay tussen product API calls om rate limiting te voorkomen
     
     async function getProductCached(productUuid: string): Promise<any> {
       if (productCache.has(productUuid)) return productCache.get(productUuid)
       
-      // Retry logic: max 3 pogingen met toenemende delay
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      // Retry logic: max 5 pogingen met exponential backoff
+      for (let attempt = 1; attempt <= 5; attempt++) {
         try {
-          // Wacht even voor elke API call (rate limiting preventie)
-          if (attempt > 1) {
-            await new Promise(r => setTimeout(r, API_DELAY_MS * attempt * 2))
-          } else {
-            await new Promise(r => setTimeout(r, API_DELAY_MS))
-          }
+          const delay = attempt === 1 ? API_DELAY_MS : API_DELAY_MS * Math.pow(2, attempt - 1)
+          await new Promise(r => setTimeout(r, delay))
           
           const details = await api.getProduct(productUuid)
           if (details) {
@@ -231,22 +226,55 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
             return details
           }
           
-          // null terug = API error (404, rate limit, etc.)
-          if (attempt < 3) {
-            console.log(`⏳ Product ${productUuid} poging ${attempt} mislukt, retry...`)
-            continue
+          if (attempt < 5) {
+            console.log(`⏳ Product ${productUuid} poging ${attempt}/5 mislukt, retry in ${delay}ms...`)
           }
         } catch (err) {
-          if (attempt < 3) {
-            console.log(`⏳ Product fetch error poging ${attempt}, retry...`)
-            continue
+          if (attempt < 5) {
+            console.log(`⏳ Product fetch error poging ${attempt}/5, retry...`)
           }
         }
       }
       
-      // Na 3 pogingen gefaald — NIET cachen zodat het later opnieuw geprobeerd kan worden
-      console.log(`❌ Product ${productUuid} niet opgehaald na 3 pogingen`)
+      console.log(`❌ Product ${productUuid} niet opgehaald na 5 pogingen`)
       return null
+    }
+
+    /**
+     * Pre-fetch alle product details voor een set van productUuids.
+     * Retried mislukte producten in meerdere rondes totdat alles opgehaald is.
+     */
+    async function prefetchProducts(productUuids: string[], label: string) {
+      const toFetch = productUuids.filter(uuid => !productCache.has(uuid))
+      if (toFetch.length === 0) return
+      
+      console.log(`📦 [${label}] Pre-fetching ${toFetch.length} producten...`)
+      
+      // Ronde 1: haal alle producten op
+      const failed: string[] = []
+      for (const uuid of toFetch) {
+        const result = await getProductCached(uuid)
+        if (!result) failed.push(uuid)
+      }
+      
+      // Ronde 2: retry alleen de mislukte producten met langere delays
+      if (failed.length > 0) {
+        console.log(`⏳ [${label}] ${failed.length} producten mislukt, wacht 3s en retry...`)
+        await new Promise(r => setTimeout(r, 3000))
+        
+        const stillFailed: string[] = []
+        for (const uuid of failed) {
+          // Force retry: verwijder uit cache zodat getProductCached opnieuw probeert
+          const result = await getProductCached(uuid)
+          if (!result) stillFailed.push(uuid)
+        }
+        
+        if (stillFailed.length > 0) {
+          console.log(`⚠️ [${label}] ${stillFailed.length} producten definitief niet opgehaald: ${stillFailed.join(', ')}`)
+        }
+      }
+      
+      console.log(`✅ [${label}] ${productCache.size} producten in cache`)
     }
 
     // === Voorraad-allocatie wordt NA de import gedaan (stap 5) ===
@@ -450,8 +478,12 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
 
     console.log(`📊 Voorraad-check: ${jobsByProduct.size} unieke producten met actieve printjobs`)
 
+    // Pre-fetch ALLE product details voordat we alloceren (voorkomt rate limiting issues)
+    await prefetchProducts(Array.from(jobsByProduct.keys()), 'voorraad-allocatie')
+    send({ type: "progress", step: 5, totalSteps: 5, message: "Voorraad-allocatie berekenen...", detail: `${productCache.size} producten opgehaald` })
+
     for (const [productUuid, jobs] of jobsByProduct) {
-      const product = await getProductCached(productUuid)
+      const product = productCache.get(productUuid)
       if (!product) continue
 
       const stockInfo = GoedGepicktAPI.extractStockInfo(product)

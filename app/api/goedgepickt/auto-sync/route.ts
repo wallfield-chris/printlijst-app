@@ -291,14 +291,30 @@ export async function GET(request: NextRequest) {
       for (const [productUuid, jobs] of jobsByProduct) {
         let totalStock = 0
         let unlimited = false
-        try {
-          const details = await api.getProduct(productUuid)
-          if (details) {
-            const stock = (details as any).stock || {}
-            totalStock = stock.totalStock ?? 0
-            unlimited = stock.unlimitedStock ?? false
+        
+        // Robuuste product fetch: 5 retries met exponential backoff
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          try {
+            const delay = attempt === 1 ? 400 : 400 * Math.pow(2, attempt - 1)
+            await new Promise(r => setTimeout(r, delay))
+            
+            const details = await api.getProduct(productUuid)
+            if (details) {
+              const stock = (details as any).stock || {}
+              totalStock = stock.totalStock ?? 0
+              unlimited = stock.unlimitedStock ?? false
+              break // success
+            }
+            
+            if (attempt < 5) {
+              console.log(`⏳ [auto-sync] Product ${productUuid} poging ${attempt}/5 mislukt, retry...`)
+            }
+          } catch {
+            if (attempt === 5) {
+              console.log(`❌ [auto-sync] Product ${productUuid} niet opgehaald na 5 pogingen`)
+            }
           }
-        } catch { /* skip */ }
+        }
 
         if (totalStock <= 0 && !unlimited) {
           // Geen voorraad: zorg dat stock_covered jobs terug naar pending gaan
