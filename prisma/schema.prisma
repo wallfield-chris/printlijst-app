@@ -239,3 +239,26 @@ model DailyMetric {
 
   @@index([date])
 }
+
+// ============================================================
+// Aftekenlijst — gedeelde dagelijkse checklist
+// Eén lijst per dag, alle werknemers kunnen items aftekenen
+// ============================================================
+model ChecklistEntry {
+  id              String   @id @default(cuid())
+  date            String   @unique // YYYY-MM-DD — één entry per dag
+
+  // Checklist items (toggles)
+  printerCleaned    Boolean  @default(false) // Printer schoongemaakt
+  workplaceClean    Boolean  @default(false) // Werkplek opgeruimd
+  returnsProcessed  Boolean  @default(false) // Retouren verwerkt
+  wasteDisposed     Boolean  @default(false) // Afval weggegooid
+
+  // Vrij tekstveld
+  notes           String?  // Opmerkingen over de dag
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([date])
+}

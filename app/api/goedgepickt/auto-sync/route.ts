@@ -5,17 +5,22 @@ import { GoedGepicktAPI } from "@/lib/goedgepickt"
 /**
  * GET /api/goedgepickt/auto-sync
  * 
- * Lightweight auto-sync: haalt pagina 1 van recente backorder orders op
+ * Near real-time auto-sync: haalt pagina 1+2 van recente backorder orders op
  * en importeert nieuwe orders die nog niet in de database zitten.
  * 
- * Server-side rate limit: max 1x per 2 minuten.
+ * Server-side rate limit: max 1x per 30 seconden.
  * Wordt automatisch aangeroepen door de printjobs pagina polling.
+ * Stock allocatie draait alleen bij nieuwe imports of elke 5 minuten.
  */
 
 // In-memory rate limiting
 let lastSyncTime = 0
 let lastSyncResult: { imported: number; checked: number; skipped: number } | null = null
-const SYNC_INTERVAL_MS = 2 * 60 * 1000 // 2 minuten
+const SYNC_INTERVAL_MS = 30 * 1000 // 30 seconden — snel genoeg voor near real-time
+
+// Stock allocatie hoeft niet elke keer
+let lastStockCheckTime = 0
+const STOCK_CHECK_INTERVAL_MS = 5 * 60 * 1000 // 5 minuten
 
 export async function GET(request: NextRequest) {
   const now = Date.now()
@@ -63,17 +68,26 @@ export async function GET(request: NextRequest) {
 
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
-    // Haal ALLEEN pagina 1 op (max 15 nieuwste orders) — lightweight!
+    // Haal pagina 1 en 2 op (max ~30 nieuwste orders) — snel genoeg voor 30s interval
     const daysBack = 30
     const createdAfter = new Date()
     createdAfter.setDate(createdAfter.getDate() - daysBack)
     const createdAfterStr = createdAfter.toISOString().split("T")[0]
 
-    const orders = await api.getOrders({
-      orderstatus: "backorder",
-      createdAfter: createdAfterStr,
-      page: 1,
-    })
+    const [page1, page2] = await Promise.all([
+      api.getOrders({
+        orderstatus: "backorder",
+        createdAfter: createdAfterStr,
+        page: 1,
+      }),
+      api.getOrders({
+        orderstatus: "backorder",
+        createdAfter: createdAfterStr,
+        page: 2,
+      }),
+    ])
+
+    const orders = [...page1, ...page2]
 
     // Filter op echte backorder status
     const backorderOrders = orders.filter((o) => o.status === "backorder")
@@ -265,11 +279,12 @@ export async function GET(request: NextRequest) {
     }
 
     // === DB-BASED VOORRAAD-ALLOCATIE ===
-    // Na import: evalueer voorraad voor ALLE actieve printjobs.
-    // Per productUuid: haal totalStock op, sorteer jobs op datum (oudste eerst),
-    // markeer de oudste `totalStock` jobs als stock_covered, rest als pending.
+    // Alleen uitvoeren als er nieuwe imports zijn OF als de vorige stock-check > 5 min geleden was
+    const shouldCheckStock = imported > 0 || (now - lastStockCheckTime > STOCK_CHECK_INTERVAL_MS)
     let stockCovered = 0
     let stockUncovered = 0
+    if (shouldCheckStock) {
+    lastStockCheckTime = now
     try {
       const allActiveJobs = await prisma.printJob.findMany({
         where: {
@@ -352,6 +367,7 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       console.error(`⚠️ [auto-sync] Voorraad-allocatie fout:`, err)
     }
+    } // end shouldCheckStock
 
     return NextResponse.json({
       success: true,

@@ -326,6 +326,10 @@ export async function GET(request: NextRequest) {
         weeklyEfficiency,
       } : { available: false },
       lastSyncedAt: lastSync?.syncedAt?.toISOString() ?? null,
+      // Auto-sync: als laatste sync > 12 uur geleden, geef signaal aan frontend
+      needsAutoSync: lastSync?.syncedAt
+        ? (Date.now() - new Date(lastSync.syncedAt).getTime()) > 12 * 60 * 60 * 1000
+        : true,
     }
 
     return NextResponse.json(responseData)

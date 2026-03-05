@@ -108,6 +108,43 @@ Of maak een gebruiker via de app interface na deployment.
 3. Voeg webhook URL toe: `https://jouw-app-naam.kinsta.app/api/webhook`
 4. Selecteer event: "Order created" of "Order fulfilled"
 
+### 3. Nachtelijke Sync Setup (GoedGepickt + Shiftbase)
+
+De app heeft een cron endpoint dat elke nacht automatisch de GoedGepickt en Shiftbase data synct voor de afgelopen 3 dagen. Zo is de analytics-data altijd up-to-date als je 's ochtends inlogt.
+
+**Stap 1: Genereer een CRON_SECRET**
+```bash
+openssl rand -hex 32
+```
+
+**Stap 2: Voeg `CRON_SECRET` toe aan Kinsta environment variables**
+```
+CRON_SECRET="jouw-gegenereerde-secret"
+```
+
+**Stap 3: Stel een externe cron service in**
+
+Gebruik een gratis cron service zoals [cron-job.org](https://cron-job.org):
+
+1. Maak een gratis account aan op cron-job.org
+2. Maak een nieuwe cron job aan:
+   - **URL**: `https://jouw-app-naam.kinsta.app/api/cron/sync-daily-metrics`
+   - **Methode**: GET
+   - **Schedule**: Elke dag om 00:00 (CET)
+   - **Headers**: Voeg een custom header toe:
+     - `Authorization`: `Bearer jouw-gegenereerde-secret`
+3. Sla op en activeer de cron job
+
+**Stap 4: Test de cron endpoint**
+```bash
+curl -H "Authorization: Bearer jouw-cron-secret" \
+  https://jouw-app-naam.kinsta.app/api/cron/sync-daily-metrics
+```
+
+Je zou een JSON response moeten krijgen met het sync resultaat.
+
+> **Tip:** De cron synct standaard de afgelopen 3 dagen (vandaag, gisteren, eergisteren) zodat late data-updates ook worden meegenomen.
+
 ### 3. Custom Domain (optioneel)
 1. Kinsta dashboard → Domains → Add domain
 2. Voeg jouw domein toe (bijv. `printlijst.jouwbedrijf.nl`)

@@ -28,11 +28,12 @@ export async function GET(request: NextRequest) {
     }
 
     // Tel actieve printjobs + per status (zo detecteren we ook statuswijzigingen)
-    const [total, pending, inProgress, completed] = await Promise.all([
+    const [total, pending, inProgress, completed, stockCovered] = await Promise.all([
       prisma.printJob.count({ where: baseWhere }),
       prisma.printJob.count({ where: { ...baseWhere, printStatus: "pending" } }),
       prisma.printJob.count({ where: { ...baseWhere, printStatus: "in_progress" } }),
       prisma.printJob.count({ where: { ...baseWhere, printStatus: "completed" } }),
+      prisma.printJob.count({ where: { ...baseWhere, printStatus: "stock_covered" } }),
     ])
 
     // Haal de meest recente receivedAt op
@@ -42,9 +43,17 @@ export async function GET(request: NextRequest) {
       select: { receivedAt: true, id: true },
     })
 
+    // Haal ook het nieuwst aangemaakte record op (kan anders zijn dan receivedAt)
+    const newest = await prisma.printJob.findFirst({
+      where: baseWhere,
+      orderBy: { id: "desc" },
+      select: { id: true },
+    })
+
     // Combineer alles tot een hash die verandert bij elke wijziging
     const latestTime = latest?.receivedAt?.getTime() || 0
-    const hash = `${total}-${pending}-${inProgress}-${completed}-${latestTime}`
+    const newestId = newest?.id || ""
+    const hash = `${total}-${pending}-${inProgress}-${completed}-${stockCovered}-${latestTime}-${newestId}`
 
     return NextResponse.json({
       count: total,

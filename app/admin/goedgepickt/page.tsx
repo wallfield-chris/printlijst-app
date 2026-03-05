@@ -83,6 +83,7 @@ interface GGStats {
   }
   lastSyncedAt?: string | null
   needsSync?: boolean
+  needsAutoSync?: boolean
 }
 
 const PERIOD_OPTIONS = [
@@ -110,6 +111,8 @@ export default function GoedgepicktPage() {
   const [needsSync, setNeedsSync] = useState(false)
   const [syncProgress, setSyncProgress] = useState<{ step: number; totalSteps: number; message: string; detail?: string } | null>(null)
   const [syncError, setSyncError] = useState("")
+  const [autoSyncing, setAutoSyncing] = useState(false)
+  const [autoSyncTriggered, setAutoSyncTriggered] = useState(false)
 
   useEffect(() => {
     if (period === "custom") {
@@ -137,9 +140,19 @@ export default function GoedgepicktPage() {
       if (data.needsSync) {
         setNeedsSync(true)
         setStats(null)
+        // Auto-sync: als er helemaal geen data is, sync automatisch
+        if (!autoSyncTriggered) {
+          setAutoSyncTriggered(true)
+          triggerAutoSync(14)
+        }
       } else {
         setNeedsSync(false)
         setStats(data)
+        // Auto-sync: als data oud is, sync op achtergrond
+        if (data.needsAutoSync && !autoSyncTriggered && !syncing) {
+          setAutoSyncTriggered(true)
+          triggerAutoSync(3)
+        }
       }
       setError("")
     } catch (err: any) {
@@ -218,6 +231,43 @@ export default function GoedgepicktPage() {
         setSyncMessage("")
         setSyncError("")
       }, 15000)
+    }
+  }
+
+  // Auto-sync: sync stilletjes op de achtergrond wanneer data oud is
+  const triggerAutoSync = async (days: number) => {
+    try {
+      setAutoSyncing(true)
+      console.log(`[AUTO-SYNC] Start achtergrond sync van ${days} dagen...`)
+
+      const res = await fetch("/api/admin/sync-daily-metrics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days }),
+      })
+
+      if (!res.ok) {
+        console.error("[AUTO-SYNC] Fout:", res.status)
+        return
+      }
+
+      // Lees de SSE stream uit (moet volledig gelezen worden)
+      const reader = res.body?.getReader()
+      if (!reader) return
+      const decoder = new TextDecoder()
+
+      while (true) {
+        const { done } = await reader.read()
+        if (done) break
+      }
+
+      console.log("[AUTO-SYNC] Voltooid, data wordt ververst...")
+      // Ververs de statistieken met de nieuwe data
+      await fetchStats()
+    } catch (err) {
+      console.error("[AUTO-SYNC] Fout:", err)
+    } finally {
+      setAutoSyncing(false)
     }
   }
 
@@ -405,6 +455,15 @@ export default function GoedgepicktPage() {
           {stats?.lastSyncedAt && (
             <span className="text-xs text-gray-400">
               Laatste sync: {new Date(stats.lastSyncedAt).toLocaleString("nl-NL")}
+              {autoSyncing && " · ⟳ Wordt bijgewerkt..."}
+            </span>
+          )}
+          {autoSyncing && !stats?.lastSyncedAt && (
+            <span className="text-xs text-blue-500 flex items-center gap-1">
+              <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Data wordt automatisch bijgewerkt...
             </span>
           )}
           {syncMessage && (

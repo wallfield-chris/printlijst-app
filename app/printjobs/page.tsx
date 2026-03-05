@@ -109,9 +109,9 @@ export default function PrintJobsPage() {
     fetchListViews()
   }, [session, status, router])
 
-  // Real-time polling: check elke 10 seconden of er nieuwe/gewijzigde printjobs zijn
+  // Real-time polling: check elke 5 seconden of er nieuwe/gewijzigde printjobs zijn
   // + check-completed elke 30 seconden (verwijdert afgeronde orders uit GG)
-  // + auto-sync vanuit GoedGepickt elke 2 minuten (importeert nieuwe orders)
+  // + auto-sync vanuit GoedGepickt elke 30 seconden (importeert nieuwe orders — server rate-limited)
   useEffect(() => {
     if (!session) return
 
@@ -157,7 +157,7 @@ export default function PrintJobsPage() {
       }
     }
 
-    // Auto-sync: haal nieuwe orders op vanuit GoedGepickt (server rate-limited op 2 min)
+    // Auto-sync: haal nieuwe orders op vanuit GoedGepickt (server rate-limited op 30s)
     const autoSync = async () => {
       try {
         const res = await fetch("/api/goedgepickt/auto-sync")
@@ -177,9 +177,9 @@ export default function PrintJobsPage() {
     checkCompleted()
     autoSync()
 
-    const pollInterval = setInterval(pollForUpdates, 10_000)       // elke 10 seconden
+    const pollInterval = setInterval(pollForUpdates, 5_000)        // elke 5 seconden
     const checkInterval = setInterval(checkCompleted, 30_000)      // elke 30 seconden
-    const syncInterval = setInterval(autoSync, 120_000)            // elke 2 minuten
+    const syncInterval = setInterval(autoSync, 30_000)             // elke 30 seconden
     return () => {
       clearInterval(pollInterval)
       clearInterval(checkInterval)
@@ -654,6 +654,12 @@ export default function PrintJobsPage() {
                 className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               >
                 Data
+              </Link>
+              <Link
+                href="/printjobs/aftekenlijst"
+                className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+              >
+                Aftekenlijst
               </Link>
             </nav>
           </div>
