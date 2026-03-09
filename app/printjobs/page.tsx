@@ -54,6 +54,7 @@ export default function PrintJobsPage() {
   const [pushToStockOpen, setPushToStockOpen] = useState(false)
   const [pickLocations, setPickLocations] = useState<{ uuid: string; name: string }[]>([])
   const [pickLocationsLoading, setPickLocationsLoading] = useState(false)
+  const [pickLocationsError, setPickLocationsError] = useState<string | null>(null)
   const [selectedLocation, setSelectedLocation] = useState<{ uuid: string; name: string } | null>(null)
   const [pushing, setPushing] = useState(false)
   const [pushResult, setPushResult] = useState<{ pushed: number; failed: number; message: string; failedProducts?: { name: string; error: string }[] } | null>(null)
@@ -574,24 +575,40 @@ export default function PrintJobsPage() {
     }
   }
 
-  const openPushToStock = async () => {
-    setPushToStockOpen(true)
-    setPushResult(null)
-    setSelectedLocation(null)
+  const fetchPickLocations = async () => {
     setPickLocationsLoading(true)
+    setPickLocationsError(null)
     try {
       const res = await fetch("/api/goedgepickt/picklocations")
       if (res.ok) {
         const data = await res.json()
-        setPickLocations(data.locations || [])
+        const locs = data.locations || []
+        if (locs.length === 0) {
+          setPickLocationsError("Geen locaties gevonden in GoedGepickt. Controleer de API key in de instellingen.")
+        }
+        setPickLocations(locs)
       } else {
+        const data = await res.json().catch(() => ({}))
+        setPickLocationsError(
+          res.status === 401
+            ? "Sessie verlopen — log opnieuw in en probeer het opnieuw."
+            : data.error || `Fout bij ophalen van locaties (HTTP ${res.status})`
+        )
         setPickLocations([])
       }
     } catch {
+      setPickLocationsError("Netwerkfout bij ophalen van locaties. Controleer je verbinding.")
       setPickLocations([])
     } finally {
       setPickLocationsLoading(false)
     }
+  }
+
+  const openPushToStock = async () => {
+    setPushToStockOpen(true)
+    setPushResult(null)
+    setSelectedLocation(null)
+    await fetchPickLocations()
   }
 
   const handlePushToStock = async () => {
@@ -1137,7 +1154,21 @@ export default function PrintJobsPage() {
                     Voorraadlocatie
                   </label>
                   {pickLocationsLoading ? (
-                    <div className="text-sm text-gray-500 py-2">Locaties ophalen...</div>
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                      <div className="w-4 h-4 border-2 border-gray-300 border-t-purple-600 rounded-full animate-spin" />
+                      Locaties ophalen uit GoedGepickt...
+                    </div>
+                  ) : pickLocationsError ? (
+                    <div className="rounded-md bg-red-50 border border-red-200 p-3">
+                      <p className="text-sm text-red-700 mb-2">{pickLocationsError}</p>
+                      <button
+                        type="button"
+                        onClick={fetchPickLocations}
+                        className="text-sm font-medium text-red-700 underline hover:text-red-900"
+                      >
+                        Opnieuw proberen
+                      </button>
+                    </div>
                   ) : pickLocations.length > 0 ? (
                     <div className="border border-gray-300 rounded-md overflow-y-auto max-h-52">
                       {pickLocations.map((loc) => (
@@ -1155,15 +1186,7 @@ export default function PrintJobsPage() {
                         </button>
                       ))}
                     </div>
-                  ) : (
-                    <input
-                      type="text"
-                      value={selectedLocation?.name || ""}
-                      onChange={(e) => setSelectedLocation(e.target.value ? { uuid: "", name: e.target.value } : null)}
-                      placeholder="Bijv. Rek A-12"
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="flex gap-3 justify-end">
