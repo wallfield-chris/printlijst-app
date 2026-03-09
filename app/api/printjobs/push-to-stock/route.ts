@@ -138,8 +138,8 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Kleine vertraging voor rate limiting (150 req/min)
-      await new Promise((r) => setTimeout(r, 200))
+      // Vertraging voor rate limiting (150 req/min): 2 calls per job → min 800ms veilig
+      await new Promise((r) => setTimeout(r, 500))
     }
 
     return NextResponse.json({

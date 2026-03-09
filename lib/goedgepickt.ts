@@ -276,35 +276,45 @@ export class GoedGepicktAPI {
     priority: number = 1
   ): Promise<{ ok: boolean; error?: string }> {
     const url = `${this.baseUrl}/products/${productUuid}/stock/${pickLocationUuid}`
-    try {
-      const body = new URLSearchParams()
-      body.append("stockQuantity", stockQuantity.toString())
-      body.append("priority", priority.toString())
+    const body = new URLSearchParams()
+    body.append("stockQuantity", stockQuantity.toString())
+    body.append("priority", priority.toString())
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: body.toString(),
-        cache: "no-store",
-      })
-      if (response.status === 200) return { ok: true }
-      const text = await response.text()
-      let errorMessage = `HTTP ${response.status}`
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const json = JSON.parse(text)
-        if (json.errorMessage) errorMessage = json.errorMessage
-        else if (json.message) errorMessage = json.message
-      } catch {}
-      console.error(`❌ Create stock location failed for ${productUuid}: ${response.status} ${text}`)
-      return { ok: false, error: errorMessage }
-    } catch (error) {
-      console.error("❌ Error creating stock location:", error)
-      return { ok: false, error: String(error) }
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: body.toString(),
+          cache: "no-store",
+        })
+        if (response.status === 200) return { ok: true }
+        const text = await response.text()
+        let errorMessage = `HTTP ${response.status}`
+        try {
+          const json = JSON.parse(text)
+          if (json.errorMessage) errorMessage = json.errorMessage
+          else if (json.message) errorMessage = json.message
+        } catch {}
+        // Retry bij rate limiting
+        if (response.status === 429 || errorMessage.toLowerCase().includes("too many")) {
+          const waitMs = 2000 * Math.pow(2, attempt)
+          console.log(`⏳ Rate limited (createStock), wacht ${waitMs}ms... (poging ${attempt + 1}/4)`)
+          await new Promise((r) => setTimeout(r, waitMs))
+          continue
+        }
+        console.error(`❌ Create stock location failed for ${productUuid}: ${response.status} ${text}`)
+        return { ok: false, error: errorMessage }
+      } catch (error) {
+        console.error("❌ Error creating stock location:", error)
+        return { ok: false, error: String(error) }
+      }
     }
+    return { ok: false, error: "Too many retries (rate limit)" }
   }
 
   /**
@@ -318,35 +328,45 @@ export class GoedGepicktAPI {
     reason?: string
   ): Promise<{ ok: boolean; error?: string }> {
     const url = `${this.baseUrl}/products/${productUuid}/stock/${pickLocationUuid}`
-    try {
-      const body = new URLSearchParams()
-      body.append("stockQuantity", stockQuantity.toString())
-      if (reason) body.append("reason", reason)
+    const body = new URLSearchParams()
+    body.append("stockQuantity", stockQuantity.toString())
+    if (reason) body.append("reason", reason)
 
-      const response = await fetch(url, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: body.toString(),
-        cache: "no-store",
-      })
-      if (response.status === 200) return { ok: true }
-      const text = await response.text()
-      let errorMessage = `HTTP ${response.status}`
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const json = JSON.parse(text)
-        if (json.errorMessage) errorMessage = json.errorMessage
-        else if (json.message) errorMessage = json.message
-      } catch {}
-      console.error(`❌ Update stock location failed for ${productUuid}: ${response.status} ${text}`)
-      return { ok: false, error: errorMessage }
-    } catch (error) {
-      console.error("❌ Error updating stock location:", error)
-      return { ok: false, error: String(error) }
+        const response = await fetch(url, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: body.toString(),
+          cache: "no-store",
+        })
+        if (response.status === 200) return { ok: true }
+        const text = await response.text()
+        let errorMessage = `HTTP ${response.status}`
+        try {
+          const json = JSON.parse(text)
+          if (json.errorMessage) errorMessage = json.errorMessage
+          else if (json.message) errorMessage = json.message
+        } catch {}
+        // Retry bij rate limiting
+        if (response.status === 429 || errorMessage.toLowerCase().includes("too many")) {
+          const waitMs = 2000 * Math.pow(2, attempt)
+          console.log(`⏳ Rate limited (updateStock), wacht ${waitMs}ms... (poging ${attempt + 1}/4)`)
+          await new Promise((r) => setTimeout(r, waitMs))
+          continue
+        }
+        console.error(`❌ Update stock location failed for ${productUuid}: ${response.status} ${text}`)
+        return { ok: false, error: errorMessage }
+      } catch (error) {
+        console.error("❌ Error updating stock location:", error)
+        return { ok: false, error: String(error) }
+      }
     }
+    return { ok: false, error: "Too many retries (rate limit)" }
   }
 
   /**
