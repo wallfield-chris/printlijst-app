@@ -197,7 +197,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     const existingJobKeys = new Set<string>()
     if (!resetMode) {
       const existingJobs = await prisma.printJob.findMany({
-        where: { printStatus: { in: ["pending", "in_progress", "stock_covered"] } },
+        where: { printStatus: { in: ["pending", "in_progress", "stock_covered", "completed", "pushed"] } },
         select: { orderUuid: true, productUuid: true, sku: true, productName: true },
       })
       for (const job of existingJobs) {
@@ -415,23 +415,49 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     }
 
     // === STAP 4b: DUPLICATEN OPRUIMEN ===
-    // Verwijder dubbele printjobs (zelfde orderUuid + productName, behoud oudste)
+    // Verwijder dubbele printjobs:
+    // 1. Als er een completed/pushed job bestaat voor dezelfde order+product → verwijder de pending/stock_covered duplicate
+    // 2. Binnen pending/stock_covered: behoud oudste, verwijder nieuwere
     let duplicatesRemoved = 0
     try {
-      const allJobs = await prisma.printJob.findMany({
+      // Stap 1: Verwijder pending/stock_covered jobs waar al een completed/pushed versie bestaat
+      const completedJobKeys = new Set<string>()
+      const completedJobs = await prisma.printJob.findMany({
+        where: { printStatus: { in: ["completed", "pushed"] } },
+        select: { orderUuid: true, productName: true, productUuid: true, sku: true },
+      })
+      for (const job of completedJobs) {
+        completedJobKeys.add(`${job.orderUuid}::${job.productName}`)
+        if (job.productUuid) completedJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
+        if (job.sku) completedJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+      }
+
+      const pendingJobs = await prisma.printJob.findMany({
         where: { printStatus: { in: ["pending", "stock_covered"] } },
-        select: { id: true, orderUuid: true, productUuid: true, productName: true, receivedAt: true },
+        select: { id: true, orderUuid: true, productUuid: true, sku: true, productName: true, receivedAt: true },
         orderBy: { receivedAt: "asc" },
       })
 
-      const seenKeys = new Map<string, string>() // key → oldest job id
       const duplicateIds: string[] = []
 
-      for (const job of allJobs) {
-        // Dedup key: orderUuid + productName (meest betrouwbaar, ook voor producten zonder UUID)
+      // Verwijder pending/stock_covered die al als completed/pushed bestaat
+      for (const job of pendingJobs) {
+        const matchesCompleted =
+          completedJobKeys.has(`${job.orderUuid}::${job.productName}`) ||
+          (job.productUuid && completedJobKeys.has(`${job.orderUuid}::${job.productUuid}`)) ||
+          (job.sku && completedJobKeys.has(`${job.orderUuid}::sku::${job.sku}`))
+        if (matchesCompleted) {
+          duplicateIds.push(job.id)
+        }
+      }
+
+      // Stap 2: Binnen remaining pending/stock_covered: verwijder dubbelen (behoud oudste)
+      const remainingPending = pendingJobs.filter(j => !duplicateIds.includes(j.id))
+      const seenKeys = new Map<string, string>()
+      for (const job of remainingPending) {
         const key = `${job.orderUuid}::${job.productName}`
         if (seenKeys.has(key)) {
-          duplicateIds.push(job.id) // dit is een nieuwere duplicate
+          duplicateIds.push(job.id)
         } else {
           seenKeys.set(key, job.id)
         }

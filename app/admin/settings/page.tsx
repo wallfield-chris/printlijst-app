@@ -46,6 +46,10 @@ export default function SettingsPage() {
   const [isBackfilling, setIsBackfilling] = useState(false)
   const [backfillResult, setBackfillResult] = useState<{ message: string; updated: number; total: number } | null>(null)
 
+  // Cleanup duplicates
+  const [isCleaningUp, setIsCleaningUp] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<{ message: string; duplicatesRemoved: number; details?: { orderNumber: string; productName: string; reason: string }[] } | null>(null)
+
   // Load settings on mount
   useEffect(() => {
     loadSettings()
@@ -555,6 +559,47 @@ export default function SettingsPage() {
                   {backfillResult.message}
                 </div>
               )}
+
+              <div className="border-t border-gray-100 pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Dubbele printjobs opruimen</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Verwijdert pending jobs die al als completed/pushed bestaan (re-import bug fix)</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setIsCleaningUp(true)
+                      setCleanupResult(null)
+                      try {
+                        const res = await fetch("/api/printjobs/cleanup-duplicates", { method: "POST" })
+                        const data = await res.json()
+                        setCleanupResult(data)
+                      } catch (err: any) {
+                        setCleanupResult({ message: err.message || "Fout bij opschonen", duplicatesRemoved: 0 })
+                      } finally {
+                        setIsCleaningUp(false)
+                      }
+                    }}
+                    disabled={isCleaningUp}
+                    className="px-4 py-2 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isCleaningUp ? "⏳ Bezig..." : "🧹 Opruimen"}
+                  </button>
+                </div>
+                {cleanupResult && (
+                  <div className={`text-sm p-3 rounded-lg mt-2 ${cleanupResult.duplicatesRemoved > 0 ? "bg-orange-50 text-orange-800" : "bg-gray-50 text-gray-600"}`}>
+                    <p className="font-medium">{cleanupResult.message}</p>
+                    {cleanupResult.details && cleanupResult.details.length > 0 && (
+                      <ul className="mt-2 space-y-0.5 text-xs">
+                        {cleanupResult.details.slice(0, 10).map((d, i) => (
+                          <li key={i}>#{d.orderNumber} – {d.productName} <span className="text-orange-600">({d.reason})</span></li>
+                        ))}
+                        {cleanupResult.details.length > 10 && <li className="text-gray-400">...en {cleanupResult.details.length - 10} meer</li>}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

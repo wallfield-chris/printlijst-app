@@ -280,29 +280,53 @@ export default function PrintJobsPage() {
       setRefreshing(true)
       setError("")
 
-      // Stap 1: Sync statussen met streaming
-      setRefreshProgress({ step: 0, totalSteps: 3, message: "Statussen ophalen..." })
+      // Stap 1: Ruim duplicaten op (pending jobs die al als completed/pushed bestaan)
+      setRefreshProgress({ step: 1, totalSteps: 4, message: "🧹 Duplicaten opruimen..." })
+      try {
+        const cleanupRes = await fetch("/api/printjobs/cleanup-duplicates", { method: "POST" })
+        if (cleanupRes.ok) {
+          const cleanupData = await cleanupRes.json()
+          if (cleanupData.duplicatesRemoved > 0) {
+            setRefreshProgress({ step: 1, totalSteps: 4, message: `🧹 ${cleanupData.duplicatesRemoved} duplicaten verwijderd` })
+          } else {
+            setRefreshProgress({ step: 1, totalSteps: 4, message: "🧹 Geen duplicaten gevonden" })
+          }
+        }
+      } catch {
+        // Silently continue — niet kritiek
+      }
+
+      // Stap 2: Verwijder afgeronde/verzonden/geannuleerde orders uit de lijst
+      setRefreshProgress({ step: 2, totalSteps: 4, message: "🗑️ Afgeronde orders controleren..." })
+      try {
+        await fetch("/api/goedgepickt/check-completed")
+      } catch {
+        // Silently continue
+      }
+
+      // Stap 3: Sync statussen + gepickte producten met streaming
+      setRefreshProgress({ step: 3, totalSteps: 4, message: "🔄 Statussen controleren..." })
       const statusResponse = await fetch("/api/printjobs/sync-statuses?stream=true", {
         method: "POST",
       })
       if (statusResponse.ok && statusResponse.body) {
         await readSSEStream(statusResponse, (p) => {
-          if (p) setRefreshProgress({ ...p, totalSteps: 3 })
+          if (p) setRefreshProgress({ step: 3, totalSteps: 4, message: p.message, detail: p.detail })
         })
       }
 
-      // Stap 2: Haal eventuele nieuwe orders op (incrementeel, geen reset) met streaming
-      setRefreshProgress({ step: 2, totalSteps: 3, message: "Nieuwe orders ophalen..." })
+      // Stap 4: Haal eventuele nieuwe orders op + voorraad-allocatie met streaming
+      setRefreshProgress({ step: 4, totalSteps: 4, message: "📦 Nieuwe orders ophalen..." })
       const syncResponse = await fetch("/api/goedgepickt/sync-orders?stream=true", {
         method: "POST",
       })
       if (syncResponse.ok && syncResponse.body) {
         await readSSEStream(syncResponse, (p) => {
-          if (p) setRefreshProgress({ step: 2, totalSteps: 3, message: p.message, detail: p.detail })
+          if (p) setRefreshProgress({ step: 4, totalSteps: 4, message: p.message, detail: p.detail })
         })
       }
 
-      setRefreshProgress({ step: 3, totalSteps: 3, message: "✅ Vernieuwen voltooid" })
+      setRefreshProgress({ step: 4, totalSteps: 4, message: "✅ Vernieuwen voltooid" })
     } catch (err: any) {
       console.error("Sync fout:", err)
       setError("Kon orders niet synchroniseren uit GoedGepickt")
@@ -602,6 +626,7 @@ export default function PrintJobsPage() {
     const viewTags = activeView.tags.split(",").filter((t) => t)
     return printJobs.filter((job) => {
       if (job.printStatus !== "completed") return false
+      if (job.missingFile) return false // Missing file jobs zijn niet geprint, niet pushen
       if (!job.tags) return false
       const jobTags = job.tags.split(",").filter((t) => t)
       return viewTags.some((tag) => jobTags.includes(tag))

@@ -36,9 +36,11 @@ export async function POST(request: NextRequest) {
     const api = new GoedGepicktAPI(apiKeySetting.value)
 
     // Zoek alle voltooide printjobs die matchen met de tab-tags
+    // Exclusief missingFile jobs: die zijn NIET geprint en horen niet in voorraad
     const completedJobs = await prisma.printJob.findMany({
       where: {
         printStatus: "completed",
+        missingFile: false,
         AND: [
           {
             OR: [

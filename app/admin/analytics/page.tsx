@@ -98,6 +98,7 @@ export default function PrintDataPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
+  const [expandedSession, setExpandedSession] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "idle">("overview")
 
   useEffect(() => {
@@ -216,6 +217,50 @@ export default function PrintDataPage() {
     }
     return t
   }, [prevData, selectedOperator])
+
+  // Groepeer completions per dag/operator in aaneengesloten werksessies (gescheiden door idle gaps)
+  const allSessions = useMemo(() => {
+    interface Session {
+      key: string
+      date: string
+      operatorId: string
+      operatorName: string
+      completions: Completion[]
+      startTime: string
+      endTime: string
+      durationMinutes: number
+    }
+    const sessions: Session[] = []
+    let sessionIndex = 0
+    for (const day of filteredDays) {
+      let current: Session | null = null
+      for (const c of day.completions) {
+        if (!current || c.isIdle) {
+          if (current && current.completions.length > 0) sessions.push(current)
+          current = {
+            key: `${day.date}-${day.operatorId}-${sessionIndex++}`,
+            date: day.date,
+            operatorId: day.operatorId,
+            operatorName: day.operatorName,
+            completions: [c],
+            startTime: c.time,
+            endTime: c.time,
+            durationMinutes: 0,
+          }
+        } else {
+          current.completions.push(c)
+          current.endTime = c.time
+        }
+      }
+      if (current && current.completions.length > 0) sessions.push(current)
+    }
+    // Bereken duur per sessie
+    for (const s of sessions) {
+      const ms = new Date(s.endTime).getTime() - new Date(s.startTime).getTime()
+      s.durationMinutes = ms / 60000
+    }
+    return sessions
+  }, [filteredDays])
 
   // Dagelijks overzicht (voor grafieken)
   const dailyChartData = useMemo(() => {
@@ -742,6 +787,116 @@ export default function PrintDataPage() {
             ) : (
               <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
             )}
+          </div>
+
+          {/* Alle Print Sessies */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Alle Print Sessies</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Een sessie is een aaneengesloten reeks printjobs zonder pauze (&gt;5 min). Klik op een rij om de individuele jobs te zien.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Operator</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Start</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Einde</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Duur</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Jobs</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Platen (formaat × stuks)</th>
+                    <th className="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {allSessions.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-gray-500">Geen sessies gevonden</td>
+                    </tr>
+                  ) : (
+                    allSessions.map((session) => {
+                      const isExpanded = expandedSession === session.key
+                      // Groepeer formaten voor samenvatting
+                      const formatGroups = session.completions.reduce<Record<string, { quantity: number; m2: number }>>((acc, c) => {
+                        const key = c.format || "Onbekend"
+                        if (!acc[key]) acc[key] = { quantity: 0, m2: 0 }
+                        acc[key].quantity += c.quantity
+                        acc[key].m2 += c.m2
+                        return acc
+                      }, {})
+                      return (
+                        <Fragment key={session.key}>
+                          <tr
+                            className="hover:bg-gray-50 cursor-pointer transition-colors"
+                            onClick={() => setExpandedSession(isExpanded ? null : session.key)}
+                          >
+                            <td className="px-4 py-2 text-gray-700">{formatDate(session.date)}</td>
+                            <td className="px-4 py-2 text-gray-600">{session.operatorName}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-600">{formatTime(session.startTime)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-600">{formatTime(session.endTime)}</td>
+                            <td className="px-4 py-2 text-right font-medium text-blue-600">
+                              {session.durationMinutes < 1 ? "&lt;1m" : formatMinutes(session.durationMinutes)}
+                            </td>
+                            <td className="px-4 py-2 text-right text-gray-600">{session.completions.length}</td>
+                            <td className="px-4 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {Object.entries(formatGroups).map(([fmt, data]) => (
+                                  <span
+                                    key={fmt}
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100"
+                                  >
+                                    {fmt} × {data.quantity}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 text-center">
+                              <span className={`inline-block transition-transform text-gray-400 ${isExpanded ? "rotate-180" : ""}`}>▼</span>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={8} className="bg-blue-50 px-6 py-4">
+                                <h4 className="text-xs font-semibold text-gray-600 uppercase mb-2">Individuele printjobs in deze sessie</h4>
+                                <table className="min-w-full text-sm">
+                                  <thead>
+                                    <tr className="text-xs text-gray-500">
+                                      <th className="pr-4 py-1 text-left">#</th>
+                                      <th className="pr-4 py-1 text-left">Tijdstip</th>
+                                      <th className="pr-4 py-1 text-left">Formaat / Plaat</th>
+                                      <th className="pr-4 py-1 text-right">Stuks</th>
+                                      <th className="pr-4 py-1 text-right">M²</th>
+                                      <th className="pr-4 py-1 text-right">Gap</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {session.completions.map((c, i) => (
+                                      <tr key={i} className="border-t border-blue-100">
+                                        <td className="pr-4 py-1 text-gray-400">{i + 1}</td>
+                                        <td className="pr-4 py-1 font-mono text-gray-800">{formatTime(c.time)}</td>
+                                        <td className="pr-4 py-1 text-gray-700 font-medium">{c.format || "—"}</td>
+                                        <td className="pr-4 py-1 text-right text-gray-600">{c.quantity}</td>
+                                        <td className="pr-4 py-1 text-right text-gray-600">{c.m2.toFixed(2)}</td>
+                                        <td className="pr-4 py-1 text-right text-gray-500">
+                                          {c.gapMinutes !== null && c.gapMinutes > 0
+                                            ? (c.gapMinutes < 1 ? "<1m" : formatMinutes(c.gapMinutes))
+                                            : "—"}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* Alle idle periodes */}

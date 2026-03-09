@@ -93,10 +93,10 @@ export async function GET(request: NextRequest) {
     const backorderOrders = orders.filter((o) => o.status === "backorder")
 
     // Bouw een set van bestaande orderUuid+productUuid/sku combinaties
-    // Inclusief stock_covered om re-import van door voorraad gedekte producten te voorkomen
+    // Inclusief completed/pushed: voorkomt dat al-gedrukte orders opnieuw geïmporteerd worden
     const existingJobKeys = new Set<string>()
     const existingJobs = await prisma.printJob.findMany({
-      where: { printStatus: { in: ["pending", "in_progress", "stock_covered"] } },
+      where: { printStatus: { in: ["pending", "in_progress", "stock_covered", "completed", "pushed"] } },
       select: { orderUuid: true, productUuid: true, sku: true, productName: true },
     })
     for (const job of existingJobs) {
