@@ -115,7 +115,7 @@ export default function GoedgepicktPage() {
   const [autoSyncTriggered, setAutoSyncTriggered] = useState(false)
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"overview" | "timeline">("overview")
+  const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "diagnose">("overview")
 
   // Activiteit Timeline
   interface ShipmentEntry {
@@ -136,6 +136,46 @@ export default function GoedgepicktPage() {
   const [timelineStart, setTimelineStart] = useState("")
   const [timelineEnd, setTimelineEnd] = useState("")
   const [expandedTimelineDay, setExpandedTimelineDay] = useState<string | null>(null)
+
+  // Diagnose tab
+  const [diagnoseInput, setDiagnoseInput] = useState("")
+  const [diagnoseLoading, setDiagnoseLoading] = useState(false)
+  const [diagnoseError, setDiagnoseError] = useState("")
+  const [diagnoseResults, setDiagnoseResults] = useState<any>(null)
+  const [forceImporting, setForceImporting] = useState(false)
+
+  const runDiagnose = async (forceImport = false) => {
+    const orderNumbers = diagnoseInput
+      .split(/[\n,;\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (orderNumbers.length === 0) {
+      setDiagnoseError("Voer minimaal één ordernummer in")
+      return
+    }
+    try {
+      if (forceImport) setForceImporting(true)
+      else setDiagnoseLoading(true)
+      setDiagnoseError("")
+      if (!forceImport) setDiagnoseResults(null)
+      const res = await fetch("/api/admin/goedgepickt/diagnose-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderNumbers, forceImport }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setDiagnoseResults(data)
+    } catch (err: any) {
+      setDiagnoseError(err.message || "Fout bij diagnose")
+    } finally {
+      setDiagnoseLoading(false)
+      setForceImporting(false)
+    }
+  }
 
   useEffect(() => {
     const today = new Date()
@@ -585,6 +625,7 @@ export default function GoedgepicktPage() {
           {[
             { key: "overview" as const, label: "Overzicht" },
             { key: "timeline" as const, label: "Activiteit Timeline" },
+            { key: "diagnose" as const, label: "🔍 Order Diagnose" },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -763,6 +804,227 @@ export default function GoedgepicktPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Diagnose tab */}
+      {activeTab === "diagnose" && (
+        <div className="space-y-6">
+          {/* Input */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Order Diagnose</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Voer ordernummers in om te controleren waarom ze niet in de printjobs staan.
+              De tool zoekt in GoedGepickt (alle statussen, 365 dagen) en vergelijkt met de database.
+            </p>
+            <textarea
+              value={diagnoseInput}
+              onChange={(e) => setDiagnoseInput(e.target.value)}
+              placeholder={"FR70912\nWN210764\nWF192142\nWF192154\nWN210823"}
+              rows={5}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            />
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => runDiagnose(false)}
+                disabled={diagnoseLoading || forceImporting}
+                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+              >
+                {diagnoseLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {diagnoseLoading ? "Zoeken..." : "🔍 Diagnose uitvoeren"}
+              </button>
+              {diagnoseResults && diagnoseResults.results?.some((r: any) => r.foundInGG && !r.inDatabase) && (
+                <button
+                  onClick={() => runDiagnose(true)}
+                  disabled={forceImporting || diagnoseLoading}
+                  className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                >
+                  {forceImporting && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {forceImporting ? "Importeren..." : "⬇️ Forceer Import"}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {diagnoseError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">{diagnoseError}</div>
+          )}
+
+          {/* Resultaten */}
+          {diagnoseResults && (
+            <>
+              {/* Summary */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                {[
+                  { label: "Gezocht", value: diagnoseResults.summary?.searched, color: "blue" },
+                  { label: "Gevonden in GG", value: diagnoseResults.summary?.foundInGG, color: "green" },
+                  { label: "Niet gevonden", value: diagnoseResults.summary?.notFoundInGG, color: "red" },
+                  { label: "Al in database", value: diagnoseResults.summary?.alreadyInDB, color: "gray" },
+                  { label: "Geïmporteerd", value: diagnoseResults.summary?.forceImported, color: "emerald" },
+                ].map((s) => (
+                  <div key={s.label} className="bg-white rounded-lg shadow p-4 text-center">
+                    <p className="text-2xl font-bold text-gray-900">{s.value ?? 0}</p>
+                    <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* GG Status verdeling */}
+              {diagnoseResults.ggStats?.statusDistribution && (
+                <div className="bg-white rounded-lg shadow p-6">
+                  <h4 className="font-semibold text-gray-900 mb-3">GoedGepickt Status Verdeling (alle orders)</h4>
+                  <p className="text-xs text-gray-400 mb-3">{diagnoseResults.ggStats.totalOrdersFetched} orders opgehaald ({diagnoseResults.ggStats.dateRange})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(diagnoseResults.ggStats.statusDistribution as Record<string, number>)
+                      .sort(([, a], [, b]) => (b as number) - (a as number))
+                      .map(([status, count]) => (
+                        <span
+                          key={status}
+                          className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium ${
+                            status === "backorder"
+                              ? "bg-blue-100 text-blue-800 ring-2 ring-blue-400"
+                              : status === "completed" || status === "shipped"
+                              ? "bg-green-100 text-green-700"
+                              : status === "processing" || status === "packing"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : "bg-gray-100 text-gray-700"
+                          }`}
+                        >
+                          {status}: {count as number}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Per order resultaat */}
+              {diagnoseResults.results?.map((r: any) => (
+                <div
+                  key={r.orderNumber}
+                  className={`bg-white rounded-lg shadow overflow-hidden border-l-4 ${
+                    r.forceImported
+                      ? "border-l-green-500"
+                      : r.foundInGG && r.reasons?.length === 0
+                      ? "border-l-yellow-400"
+                      : r.foundInGG
+                      ? "border-l-orange-500"
+                      : "border-l-red-500"
+                  }`}
+                >
+                  <div className="px-6 py-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <h4 className="text-lg font-bold text-gray-900">{r.orderNumber}</h4>
+                        {r.forceImported && (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">✅ Geïmporteerd</span>
+                        )}
+                        {r.foundInGG ? (
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            r.ggStatus === "backorder" ? "bg-blue-100 text-blue-800" : "bg-yellow-100 text-yellow-800"
+                          }`}>
+                            GG: {r.ggStatus}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Niet in GG</span>
+                        )}
+                        {r.inDatabase ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            In DB ({r.dbJobs?.length} jobs)
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                            Niet in DB
+                          </span>
+                        )}
+                      </div>
+                      {r.customer && <span className="text-sm text-gray-500">{r.customer}</span>}
+                    </div>
+
+                    {/* Redenen */}
+                    {r.reasons && r.reasons.length > 0 && (
+                      <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                        <p className="text-xs font-medium text-red-800 mb-1">🚨 Redenen waarom niet geïmporteerd:</p>
+                        {r.reasons.map((reason: string, i: number) => (
+                          <p key={i} className="text-sm text-red-700">• {reason}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Bestaande DB jobs */}
+                    {r.dbJobs && r.dbJobs.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Bestaande printjobs in database:</p>
+                        <div className="space-y-1">
+                          {r.dbJobs.map((job: any, i: number) => (
+                            <div key={i} className="flex items-center gap-3 text-sm bg-gray-50 rounded px-3 py-1.5">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                job.printStatus === "completed" ? "bg-green-100 text-green-700"
+                                : job.printStatus === "pushed" ? "bg-blue-100 text-blue-700"
+                                : job.printStatus === "stock_covered" ? "bg-purple-100 text-purple-700"
+                                : "bg-yellow-100 text-yellow-700"
+                              }`}>
+                                {job.printStatus}
+                              </span>
+                              <span className="text-gray-700">{job.productName}</span>
+                              {job.sku && <span className="text-gray-400 text-xs">({job.sku})</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GG Producten */}
+                    {r.products && r.products.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-2">Producten in GoedGepickt:</p>
+                        <div className="border border-gray-100 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Product</th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">SKU</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Qty</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Picked</th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {r.products.map((p: any, i: number) => (
+                                <tr key={i}>
+                                  <td className="px-3 py-2 text-gray-900">{p.productName}</td>
+                                  <td className="px-3 py-2 text-gray-500 font-mono text-xs">{p.sku || "—"}</td>
+                                  <td className="px-3 py-2 text-center">{p.quantity}</td>
+                                  <td className="px-3 py-2 text-center">{p.pickedQuantity}</td>
+                                  <td className="px-3 py-2">
+                                    {p.reasons && p.reasons.length > 0 ? (
+                                      <div className="space-y-0.5">
+                                        {p.reasons.map((reason: string, j: number) => (
+                                          <p key={j} className="text-xs text-orange-600">⚠️ {reason}</p>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="text-xs text-green-600">✅ Kan geïmporteerd worden</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extra info */}
+                    {r.ggCreatedAt && (
+                      <p className="text-xs text-gray-400 mt-3">
+                        Aangemaakt in GG: {new Date(r.ggCreatedAt).toLocaleString("nl-NL")} | UUID: {r.ggUuid || "?"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
 
