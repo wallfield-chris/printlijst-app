@@ -61,6 +61,21 @@ export async function POST(request: NextRequest) {
     const orderNumbers: string[] = body.orderNumbers || []
     const forceImport: boolean = body.forceImport === true
     const fixVisibility: boolean = body.fixVisibility === true
+    const fixJobId: string | null = body.fixJobId || null // Fix single job
+
+    // === Quick path: fix single job by ID ===
+    if (fixJobId) {
+      const job = await prisma.printJob.findUnique({ where: { id: fixJobId }, select: { id: true, printStatus: true, orderStatus: true } })
+      if (!job) return NextResponse.json({ error: "Job niet gevonden" }, { status: 404 })
+      await prisma.printJob.update({
+        where: { id: fixJobId },
+        data: {
+          orderStatus: "backorder",
+          printStatus: ["stock_covered", "pushed"].includes(job.printStatus) ? "pending" : job.printStatus,
+        },
+      })
+      return NextResponse.json({ success: true, fixedJobId: fixJobId })
+    }
 
     if (orderNumbers.length === 0 || orderNumbers.length > 20) {
       return NextResponse.json({ error: "Geef 1-20 ordernummers op" }, { status: 400 })

@@ -144,6 +144,28 @@ export default function GoedgepicktPage() {
   const [diagnoseResults, setDiagnoseResults] = useState<any>(null)
   const [forceImporting, setForceImporting] = useState(false)
   const [fixingVisibility, setFixingVisibility] = useState(false)
+  const [fixingJobId, setFixingJobId] = useState<string | null>(null)
+
+  const fixSingleJob = async (jobId: string) => {
+    try {
+      setFixingJobId(jobId)
+      const res = await fetch("/api/admin/goedgepickt/diagnose-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fixJobId: jobId }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+      // Re-run diagnose to refresh data
+      await runDiagnose(false, false)
+    } catch (err: any) {
+      setDiagnoseError(err.message || "Fout bij fixen")
+    } finally {
+      setFixingJobId(null)
+    }
+  }
 
   const runDiagnose = async (forceImport = false, fixVisibility = false) => {
     const orderNumbers = diagnoseInput
@@ -995,7 +1017,18 @@ export default function GoedgepicktPage() {
                               {job.isVisible ? (
                                 <span className="text-xs text-green-600 font-medium">✅ Zichtbaar</span>
                               ) : (
-                                <span className="text-xs text-red-600 font-medium" title={job.hiddenReasons?.join(', ')}>❌ Verborgen</span>
+                                <button
+                                  onClick={() => fixSingleJob(job.id)}
+                                  disabled={fixingJobId === job.id}
+                                  className="px-2.5 py-1 rounded text-xs font-medium bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                                >
+                                  {fixingJobId === job.id ? (
+                                    <div className="w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <>🔧</>
+                                  )}
+                                  Maak zichtbaar
+                                </button>
                               )}
                             </div>
                           ))}
