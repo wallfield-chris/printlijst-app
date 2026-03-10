@@ -97,12 +97,13 @@ async function runSyncStatusesLogic(send: SendFn = noopSend) {
   const api = new GoedGepicktAPI(apiKeySetting.value)
 
   // Haal alle actieve printjobs op die we moeten controleren
+  // Inclusief stock_covered: deze moeten ook gecheckt worden op statuswijzigingen
   const activeOrders = await prisma.printJob.findMany({
     where: {
       orderUuid: { not: null },
-      printStatus: { in: ["pending", "in_progress"] },
+      printStatus: { in: ["pending", "in_progress", "stock_covered"] },
     },
-    select: { id: true, orderUuid: true, sku: true, productUuid: true, quantity: true },
+    select: { id: true, orderUuid: true, sku: true, productUuid: true, quantity: true, printStatus: true },
   })
 
   // Groepeer per orderUuid

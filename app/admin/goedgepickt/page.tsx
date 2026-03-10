@@ -143,8 +143,9 @@ export default function GoedgepicktPage() {
   const [diagnoseError, setDiagnoseError] = useState("")
   const [diagnoseResults, setDiagnoseResults] = useState<any>(null)
   const [forceImporting, setForceImporting] = useState(false)
+  const [fixingVisibility, setFixingVisibility] = useState(false)
 
-  const runDiagnose = async (forceImport = false) => {
+  const runDiagnose = async (forceImport = false, fixVisibility = false) => {
     const orderNumbers = diagnoseInput
       .split(/[\n,;\s]+/)
       .map((s) => s.trim())
@@ -154,14 +155,15 @@ export default function GoedgepicktPage() {
       return
     }
     try {
-      if (forceImport) setForceImporting(true)
+      if (fixVisibility) setFixingVisibility(true)
+      else if (forceImport) setForceImporting(true)
       else setDiagnoseLoading(true)
       setDiagnoseError("")
-      if (!forceImport) setDiagnoseResults(null)
+      if (!forceImport && !fixVisibility) setDiagnoseResults(null)
       const res = await fetch("/api/admin/goedgepickt/diagnose-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderNumbers, forceImport }),
+        body: JSON.stringify({ orderNumbers, forceImport, fixVisibility }),
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
@@ -174,6 +176,7 @@ export default function GoedgepicktPage() {
     } finally {
       setDiagnoseLoading(false)
       setForceImporting(false)
+      setFixingVisibility(false)
     }
   }
 
@@ -824,10 +827,10 @@ export default function GoedgepicktPage() {
               rows={5}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             />
-            <div className="flex gap-3 mt-4">
+            <div className="flex gap-3 mt-4 flex-wrap">
               <button
-                onClick={() => runDiagnose(false)}
-                disabled={diagnoseLoading || forceImporting}
+                onClick={() => runDiagnose(false, false)}
+                disabled={diagnoseLoading || forceImporting || fixingVisibility}
                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
               >
                 {diagnoseLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
@@ -835,12 +838,24 @@ export default function GoedgepicktPage() {
               </button>
               {diagnoseResults && diagnoseResults.results?.some((r: any) => r.foundInGG && !r.inDatabase) && (
                 <button
-                  onClick={() => runDiagnose(true)}
-                  disabled={forceImporting || diagnoseLoading}
+                  onClick={() => runDiagnose(true, false)}
+                  disabled={forceImporting || diagnoseLoading || fixingVisibility}
                   className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
                 >
                   {forceImporting && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   {forceImporting ? "Importeren..." : "⬇️ Forceer Import"}
+                </button>
+              )}
+              {diagnoseResults && diagnoseResults.results?.some((r: any) =>
+                r.dbJobs?.some((j: any) => !j.isVisible)
+              ) && (
+                <button
+                  onClick={() => runDiagnose(false, true)}
+                  disabled={fixingVisibility || diagnoseLoading || forceImporting}
+                  className="px-5 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                >
+                  {fixingVisibility && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {fixingVisibility ? "Fixen..." : "🔧 Maak Zichtbaar"}
                 </button>
               )}
             </div>
@@ -854,13 +869,14 @@ export default function GoedgepicktPage() {
           {diagnoseResults && (
             <>
               {/* Summary */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
                 {[
                   { label: "Gezocht", value: diagnoseResults.summary?.searched, color: "blue" },
                   { label: "Gevonden in GG", value: diagnoseResults.summary?.foundInGG, color: "green" },
                   { label: "Niet gevonden", value: diagnoseResults.summary?.notFoundInGG, color: "red" },
                   { label: "Al in database", value: diagnoseResults.summary?.alreadyInDB, color: "gray" },
                   { label: "Geïmporteerd", value: diagnoseResults.summary?.forceImported, color: "emerald" },
+                  { label: "Zichtbaar gemaakt", value: diagnoseResults.summary?.fixedVisibility, color: "orange" },
                 ].map((s) => (
                   <div key={s.label} className="bg-white rounded-lg shadow p-4 text-center">
                     <p className="text-2xl font-bold text-gray-900">{s.value ?? 0}</p>
@@ -956,7 +972,7 @@ export default function GoedgepicktPage() {
                         <p className="text-xs font-medium text-gray-500 mb-2">Bestaande printjobs in database:</p>
                         <div className="space-y-1">
                           {r.dbJobs.map((job: any, i: number) => (
-                            <div key={i} className="flex items-center gap-3 text-sm bg-gray-50 rounded px-3 py-1.5">
+                            <div key={i} className={`flex items-center gap-3 text-sm rounded px-3 py-2 ${!job.isVisible ? 'bg-red-50 border border-red-200' : 'bg-gray-50'}`}>
                               <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                                 job.printStatus === "completed" ? "bg-green-100 text-green-700"
                                 : job.printStatus === "pushed" ? "bg-blue-100 text-blue-700"
@@ -965,10 +981,80 @@ export default function GoedgepicktPage() {
                               }`}>
                                 {job.printStatus}
                               </span>
-                              <span className="text-gray-700">{job.productName}</span>
+                              {job.orderStatus && (
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                  job.orderStatus === "backorder" ? "bg-blue-50 text-blue-600"
+                                  : ["completed","cancelled","shipped"].includes(job.orderStatus) ? "bg-red-100 text-red-700"
+                                  : "bg-gray-100 text-gray-600"
+                                }`}>
+                                  order: {job.orderStatus}
+                                </span>
+                              )}
+                              <span className="text-gray-700 flex-1">{job.productName}</span>
                               {job.sku && <span className="text-gray-400 text-xs">({job.sku})</span>}
+                              {job.isVisible ? (
+                                <span className="text-xs text-green-600 font-medium">✅ Zichtbaar</span>
+                              ) : (
+                                <span className="text-xs text-red-600 font-medium" title={job.hiddenReasons?.join(', ')}>❌ Verborgen</span>
+                              )}
                             </div>
                           ))}
+                          {r.dbJobs.some((j: any) => !j.isVisible) && (
+                            <div className="bg-red-50 border border-red-200 rounded p-2 mt-1">
+                              <p className="text-xs text-red-700 font-medium">🔴 Verborgen door:</p>
+                              {r.dbJobs.filter((j: any) => !j.isVisible).flatMap((j: any) => j.hiddenReasons || []).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).map((reason: string, i: number) => (
+                                <p key={i} className="text-xs text-red-600 ml-2">• {reason}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Stock info */}
+                    {r.stockInfo && r.stockInfo.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Voorraad in GoedGepickt (live):</p>
+                        <div className="border border-gray-100 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Product</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Totaal</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Gereserveerd</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">Vrij</th>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Conclusie</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {r.stockInfo.map((s: any, i: number) => (
+                                <tr key={i}>
+                                  <td className="px-3 py-2">
+                                    <span className="text-gray-900">{s.productName}</span>
+                                    {s.sku && <span className="text-gray-400 text-xs ml-1">({s.sku})</span>}
+                                  </td>
+                                  <td className="px-3 py-2 text-center font-mono">{s.unlimitedStock ? '∞' : s.totalStock}</td>
+                                  <td className="px-3 py-2 text-center font-mono">{s.reservedStock}</td>
+                                  <td className={`px-3 py-2 text-center font-mono font-medium ${
+                                    s.freeStock <= 0 ? 'text-red-600' : 'text-green-600'
+                                  }`}>
+                                    {s.unlimitedStock ? '∞' : s.freeStock}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {s.unlimitedStock ? (
+                                      <span className="text-xs text-purple-600">Onbeperkt</span>
+                                    ) : s.totalStock <= 0 ? (
+                                      <span className="text-xs text-red-600 font-medium">❌ Geen voorraad — MOET geprint worden</span>
+                                    ) : s.freeStock <= 0 ? (
+                                      <span className="text-xs text-orange-600">⚠️ Alles gereserveerd</span>
+                                    ) : (
+                                      <span className="text-xs text-green-600">✅ {s.freeStock} vrij beschikbaar</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     )}

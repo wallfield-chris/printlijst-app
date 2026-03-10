@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const orderNumbers: string[] = body.orderNumbers || []
     const forceImport: boolean = body.forceImport === true
+    const fixVisibility: boolean = body.fixVisibility === true
 
     if (orderNumbers.length === 0 || orderNumbers.length > 20) {
       return NextResponse.json({ error: "Geef 1-20 ordernummers op" }, { status: 400 })
@@ -80,6 +81,9 @@ export async function POST(request: NextRequest) {
     // ==========================================
     // STAP 1: Check database voor bestaande jobs
     // ==========================================
+    const HIDDEN_ORDER_STATUSES = ["completed", "cancelled", "shipped"]
+    const HIDDEN_PRINT_STATUSES = ["pushed", "stock_covered"]
+
     const dbResults: Record<string, any[]> = {}
     for (const orderNum of orderNumbers) {
       const jobs = await prisma.printJob.findMany({
@@ -88,6 +92,7 @@ export async function POST(request: NextRequest) {
           id: true,
           orderNumber: true,
           orderUuid: true,
+          productUuid: true,
           productName: true,
           sku: true,
           printStatus: true,
@@ -100,6 +105,42 @@ export async function POST(request: NextRequest) {
         },
       })
       dbResults[orderNum] = jobs
+    }
+
+    // ==========================================
+    // FIX VISIBILITY: reset orderStatus + printStatus
+    // ==========================================
+    let fixedCount = 0
+    if (fixVisibility) {
+      for (const orderNum of orderNumbers) {
+        const jobs = dbResults[orderNum] || []
+        for (const job of jobs) {
+          const needsFix =
+            HIDDEN_ORDER_STATUSES.includes(job.orderStatus || "") ||
+            HIDDEN_PRINT_STATUSES.includes(job.printStatus)
+          if (needsFix) {
+            await prisma.printJob.update({
+              where: { id: job.id },
+              data: {
+                orderStatus: "backorder",
+                printStatus: job.printStatus === "stock_covered" ? "pending" : job.printStatus === "pushed" ? "pending" : job.printStatus,
+              },
+            })
+            fixedCount++
+          }
+        }
+      }
+      // Re-fetch na fix
+      for (const orderNum of orderNumbers) {
+        dbResults[orderNum] = await prisma.printJob.findMany({
+          where: { orderNumber: orderNum },
+          select: {
+            id: true, orderNumber: true, orderUuid: true, productUuid: true, productName: true,
+            sku: true, printStatus: true, orderStatus: true, backorder: true,
+            receivedAt: true, completedAt: true, pickedQuantity: true, quantity: true,
+          },
+        })
+      }
     }
 
     // ==========================================
@@ -161,15 +202,28 @@ export async function POST(request: NextRequest) {
       const result: any = {
         orderNumber: orderNum,
         inDatabase: dbJobs.length > 0,
-        dbJobs: dbJobs.map((j) => ({
-          printStatus: j.printStatus,
-          productName: j.productName,
-          sku: j.sku,
-          quantity: j.quantity,
-          pickedQuantity: j.pickedQuantity,
-          orderStatus: j.orderStatus,
-          receivedAt: j.receivedAt,
-        })),
+        dbJobs: dbJobs.map((j: any) => {
+          // Visibility check: zou deze job zichtbaar zijn in de printlijst?
+          const hiddenByOrderStatus = HIDDEN_ORDER_STATUSES.includes(j.orderStatus || "")
+          const hiddenByPrintStatus = HIDDEN_PRINT_STATUSES.includes(j.printStatus)
+          const isVisible = !hiddenByOrderStatus && !hiddenByPrintStatus
+          const hiddenReasons: string[] = []
+          if (hiddenByOrderStatus) hiddenReasons.push(`orderStatus="${j.orderStatus}" wordt gefilterd`)
+          if (hiddenByPrintStatus) hiddenReasons.push(`printStatus="${j.printStatus}" is niet zichtbaar`)
+          return {
+            id: j.id,
+            printStatus: j.printStatus,
+            orderStatus: j.orderStatus,
+            productName: j.productName,
+            productUuid: j.productUuid,
+            sku: j.sku,
+            quantity: j.quantity,
+            pickedQuantity: j.pickedQuantity,
+            receivedAt: j.receivedAt,
+            isVisible,
+            hiddenReasons,
+          }
+        }),
         foundInGG: !!order,
         ggStatus: order?.status || null,
         ggCreatedAt: order?.createDate || order?.createdAt || null,
@@ -360,6 +414,32 @@ export async function POST(request: NextRequest) {
         result.forceImported = true
       }
 
+      // === STOCK CHECK voor stock_covered jobs ===
+      if (result.inDatabase) {
+        const api = new GoedGepicktAPI(apiKey)
+        const stockChecked = new Set<string>()
+        for (const dbJob of dbJobs) {
+          if (dbJob.productUuid && !stockChecked.has(dbJob.productUuid)) {
+            stockChecked.add(dbJob.productUuid)
+            try {
+              const stockInfo = await api.getProductTotalStock(dbJob.productUuid)
+              result.stockInfo = result.stockInfo || []
+              result.stockInfo.push({
+                productUuid: dbJob.productUuid,
+                sku: dbJob.sku,
+                productName: dbJob.productName,
+                totalStock: stockInfo.totalStock,
+                freeStock: stockInfo.freeStock,
+                reservedStock: stockInfo.reservedStock,
+                unlimitedStock: stockInfo.unlimitedStock,
+                debug: stockInfo.debug,
+              })
+              await sleep(400)
+            } catch { /* ignore stock errors */ }
+          }
+        }
+      }
+
       results.push(result)
     }
 
@@ -378,6 +458,7 @@ export async function POST(request: NextRequest) {
         notFoundInGG: orderNumbers.length - foundOrders.size,
         alreadyInDB: Object.values(dbResults).filter((jobs) => jobs.length > 0).length,
         forceImported: importedCount,
+        fixedVisibility: fixedCount,
       },
       ggStats: {
         totalOrdersFetched: allOrders.length,
