@@ -82,6 +82,30 @@ export async function GET(request: NextRequest) {
     const endDateObj = new Date(endDate + "T23:59:59")
     const startDateObj = new Date(startDate + "T00:00:00")
 
+    // Verzamel alle unieke orderUuids uit de zendingen
+    const uniqueOrderUuids = [
+      ...new Set(
+        shipments
+          .map((s: any) => s.orderUuid || s.order_uuid || s.orderId || undefined)
+          .filter(Boolean) as string[]
+      ),
+    ]
+
+    // Zoek ordernummers op in de database via orderUuid
+    const jobRows = uniqueOrderUuids.length > 0
+      ? await prisma.printJob.findMany({
+          where: { orderUuid: { in: uniqueOrderUuids } },
+          select: { orderUuid: true, orderNumber: true },
+          distinct: ["orderUuid"],
+        })
+      : []
+    const uuidToOrderNumber = new Map<string, string>()
+    for (const row of jobRows) {
+      if (row.orderUuid && row.orderNumber) {
+        uuidToOrderNumber.set(row.orderUuid, row.orderNumber)
+      }
+    }
+
     // Map: date -> gesorteerde array van { time: ISO string, orderNumber?: string }
     const byDay: Record<string, { time: string; orderNumber?: string; orderUuid?: string }[]> = {}
 
@@ -93,10 +117,11 @@ export async function GET(request: NextRequest) {
       if (d < startDateObj || d > endDateObj) continue
       const dayKey = toDateStr(d)
       if (!byDay[dayKey]) byDay[dayKey] = []
+      const orderUuid: string | undefined = s.orderUuid || s.order_uuid || s.orderId || undefined
       byDay[dayKey].push({
         time: d.toISOString(),
-        orderNumber: s.orderNumber || s.order_number || undefined,
-        orderUuid: s.orderUuid || s.order_uuid || undefined,
+        orderNumber: (orderUuid ? uuidToOrderNumber.get(orderUuid) : undefined) || s.orderNumber || s.order_number || undefined,
+        orderUuid,
       })
     }
 
