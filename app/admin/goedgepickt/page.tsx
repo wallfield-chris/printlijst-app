@@ -114,6 +114,38 @@ export default function GoedgepicktPage() {
   const [autoSyncing, setAutoSyncing] = useState(false)
   const [autoSyncTriggered, setAutoSyncTriggered] = useState(false)
 
+  // Tabs
+  const [activeTab, setActiveTab] = useState<"overview" | "timeline">("overview")
+
+  // Activiteit Timeline
+  interface ShipmentEntry {
+    time: string
+    orderNumber?: string
+    gapMinutes: number | null
+  }
+  interface TimelineDay {
+    date: string
+    count: number
+    firstShipment: string | null
+    lastShipment: string | null
+    shipments: ShipmentEntry[]
+  }
+  const [timelineDays, setTimelineDays] = useState<TimelineDay[]>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineError, setTimelineError] = useState("")
+  const [timelineStart, setTimelineStart] = useState("")
+  const [timelineEnd, setTimelineEnd] = useState("")
+  const [expandedTimelineDay, setExpandedTimelineDay] = useState<string | null>(null)
+
+  useEffect(() => {
+    const today = new Date()
+    const sevenDaysAgo = new Date(today)
+    sevenDaysAgo.setDate(today.getDate() - 6)
+    const fmt = (d: Date) => d.toISOString().split("T")[0]
+    setTimelineEnd(fmt(today))
+    setTimelineStart(fmt(sevenDaysAgo))
+  }, [])
+
   useEffect(() => {
     if (period === "custom") {
       // Only fetch when both dates are set
@@ -122,6 +154,35 @@ export default function GoedgepicktPage() {
       fetchStats()
     }
   }, [period, customStartDate, customEndDate])
+
+  useEffect(() => {
+    if (activeTab === "timeline" && timelineStart && timelineEnd && timelineDays.length === 0 && !timelineLoading) {
+      fetchTimeline()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, timelineStart, timelineEnd])
+
+  const fetchTimeline = async () => {
+    if (!timelineStart || !timelineEnd) return
+    try {
+      setTimelineLoading(true)
+      setTimelineError("")
+      setTimelineDays([])
+      const res = await fetch(
+        `/api/admin/goedgepickt/shipment-timeline?start=${timelineStart}&end=${timelineEnd}`
+      )
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setTimelineDays(data.days || [])
+    } catch (err: any) {
+      setTimelineError(err.message || "Fout bij ophalen")
+    } finally {
+      setTimelineLoading(false)
+    }
+  }
 
   const fetchStats = async () => {
     try {
@@ -442,6 +503,26 @@ export default function GoedgepicktPage() {
     return `${d.getDate()}/${d.getMonth() + 1} - ${endOfWeek.getDate()}/${endOfWeek.getMonth() + 1}`
   }
 
+  function formatTime(iso: string) {
+    return new Date(iso).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+  }
+  function formatDateLong(dateStr: string) {
+    return new Date(dateStr + "T12:00:00").toLocaleDateString("nl-NL", {
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+    })
+  }
+  function formatDateShort(dateStr: string) {
+    return new Date(dateStr + "T12:00:00").toLocaleDateString("nl-NL", {
+      weekday: "short", day: "numeric", month: "short",
+    })
+  }
+  function fmtGap(min: number | null) {
+    if (min === null || min < 0) return "—"
+    if (min < 1) return "<1m"
+    const h = Math.floor(min / 60), m = Math.round(min % 60)
+    return h === 0 ? `${m}m` : `${h}u ${m}m`
+  }
+
   return (
     <div className="p-8">
       <div className="mb-8 flex justify-between items-center">
@@ -497,6 +578,196 @@ export default function GoedgepicktPage() {
 
       {/* Sync progress panel */}
       <SyncProgressPanel />
+
+      {/* Tabs */}
+      <div className="mb-6 border-b border-gray-200">
+        <div className="flex gap-6">
+          {[
+            { key: "overview" as const, label: "Overzicht" },
+            { key: "timeline" as const, label: "Activiteit Timeline" },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.key
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Activiteit Timeline tab */}
+      {activeTab === "timeline" && (
+        <div className="space-y-6">
+          {/* Datumkiezer + ophaal-knop */}
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Van</label>
+              <input
+                type="date"
+                value={timelineStart}
+                onChange={(e) => setTimelineStart(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tot</label>
+              <input
+                type="date"
+                value={timelineEnd}
+                onChange={(e) => setTimelineEnd(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <button
+              onClick={fetchTimeline}
+              disabled={timelineLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+            >
+              {timelineLoading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {timelineLoading ? "Laden..." : "Ophalen"}
+            </button>
+          </div>
+
+          {timelineError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">{timelineError}</div>
+          )}
+
+          {!timelineLoading && !timelineError && timelineDays.length === 0 && (
+            <div className="text-center py-12 text-gray-400">Geen zendingen gevonden in deze periode</div>
+          )}
+
+          {/* Per dag een kaart */}
+          {timelineDays.map((day) => {
+            const isExpanded = expandedTimelineDay === day.date
+            const firstMs = day.firstShipment ? new Date(day.firstShipment).getTime() : 0
+            const lastMs = day.lastShipment ? new Date(day.lastShipment).getTime() : 0
+            const spanMs = lastMs - firstMs
+            const spanMinutes = spanMs / 60000
+
+            return (
+              <div key={day.date} className="bg-white rounded-lg shadow overflow-hidden">
+                {/* Dag header */}
+                <button
+                  className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors text-left"
+                  onClick={() => setExpandedTimelineDay(isExpanded ? null : day.date)}
+                >
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <p className="font-semibold text-gray-900">{formatDateLong(day.date)}</p>
+                      {day.firstShipment && day.lastShipment && (
+                        <p className="text-sm text-gray-500 mt-0.5">
+                          {formatTime(day.firstShipment)} – {formatTime(day.lastShipment)}
+                          {spanMinutes > 0 && (
+                            <span className="ml-2 text-gray-400">({fmtGap(spanMinutes)} werkvenster)</span>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-green-100 text-green-800 font-medium">
+                        {day.count} zendingen
+                      </span>
+                      {spanMinutes > 0 && (
+                        <span className="text-gray-500">
+                          gem. {fmtGap(spanMinutes / Math.max(day.count - 1, 1))} per zending
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className={`text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}>▼</span>
+                </button>
+
+                {/* Visuele tijdlijn */}
+                {day.shipments.length >= 2 && (
+                  <div className="px-6 pb-2">
+                    <div className="relative h-8 bg-gray-100 rounded-lg overflow-hidden">
+                      {day.shipments.map((s, i) => {
+                        const posMs = new Date(s.time).getTime() - firstMs
+                        const pct = spanMs > 0 ? (posMs / spanMs) * 100 : 0
+                        const isLargeGap = s.gapMinutes !== null && s.gapMinutes > 15
+                        return (
+                          <div
+                            key={i}
+                            className={`absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full border-2 border-white z-10 ${
+                              isLargeGap ? "bg-orange-500" : "bg-green-500"
+                            }`}
+                            style={{ left: `calc(${pct}% - 5px)` }}
+                            title={`${formatTime(s.time)}${s.orderNumber ? ` — Order ${s.orderNumber}` : ""}${s.gapMinutes ? ` (gap: ${fmtGap(s.gapMinutes)})` : ""}`}
+                          />
+                        )
+                      })}
+                      {/* Groene balk als achtergrond */}
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full h-1 bg-green-200 rounded" />
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-400 mt-1">
+                      {day.firstShipment && <span>{formatTime(day.firstShipment)}</span>}
+                      {day.lastShipment && <span>{formatTime(day.lastShipment)}</span>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Uitklapbare detailtabel */}
+                {isExpanded && (
+                  <div className="px-6 pb-5">
+                    <div className="mt-3 border border-gray-100 rounded-lg overflow-hidden">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tijdstip</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Ordernummer</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Wachttijd na vorige</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {day.shipments.map((s, i) => {
+                            const isLargeGap = s.gapMinutes !== null && s.gapMinutes > 15
+                            return (
+                              <tr key={i} className={isLargeGap ? "bg-orange-50" : ""}>
+                                <td className="px-4 py-2 text-gray-400">{i + 1}</td>
+                                <td className="px-4 py-2 font-mono font-medium text-gray-900">{formatTime(s.time)}</td>
+                                <td className="px-4 py-2 text-gray-600">{s.orderNumber || "—"}</td>
+                                <td className="px-4 py-2 text-right">
+                                  {s.gapMinutes !== null ? (
+                                    <span className={isLargeGap ? "text-orange-600 font-semibold" : "text-gray-500"}>
+                                      {fmtGap(s.gapMinutes)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex gap-4 mt-3 text-xs text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> normale activiteit
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" /> &gt;15 min pauze na vorige zending
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {activeTab === "overview" && (
+      <>
 
       {/* Periode selector */}
       <div className="mb-6">
@@ -1056,6 +1327,9 @@ export default function GoedgepicktPage() {
           </div>
         )}
       </div>
+
+      </> /* end activeTab === "overview" */
+      )}
     </div>
   )
 }
