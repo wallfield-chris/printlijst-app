@@ -59,6 +59,8 @@ interface PrintDataResponse {
   operators: Operator[]
   dayAnalyses: DayAnalysis[]
   dailySummary: DailySummary[]
+  shiftbasePrintHours: number
+  shiftbasePrintHoursByDate: Record<string, number>
 }
 
 function formatMinutes(min: number): string {
@@ -172,6 +174,7 @@ export default function PrintDataPage() {
       estimatedPrintMinutes: 0,
       idleCount: 0,
       workDays: 0,
+      shiftbasePrintHours: 0,
     }
     for (const d of filteredDays) {
       t.totalActiveMinutes += d.totalActiveMinutes
@@ -184,8 +187,23 @@ export default function PrintDataPage() {
       t.idleCount += d.idleCount
       t.workDays++
     }
+    // Shiftbase printuren: als operator geselecteerd, tonen we het totaal (niet per-operator beschikbaar)
+    // Bij "alle operators" tonen we de som van alle dagen
+    if (data?.shiftbasePrintHoursByDate) {
+      if (selectedOperator === "all") {
+        t.shiftbasePrintHours = data.shiftbasePrintHours
+      } else {
+        // Per-operator niet beschikbaar uit Shiftbase, toon totaal van de gefilterde werkdagen
+        const filteredDates = new Set(filteredDays.map(d => d.date))
+        for (const [date, hours] of Object.entries(data.shiftbasePrintHoursByDate)) {
+          if (filteredDates.has(date)) {
+            t.shiftbasePrintHours += hours
+          }
+        }
+      }
+    }
     return t
-  }, [filteredDays])
+  }, [filteredDays, data, selectedOperator])
 
   // Totalen vorige periode
   const prevTotals = useMemo(() => {
@@ -199,6 +217,7 @@ export default function PrintDataPage() {
       estimatedPrintMinutes: 0,
       idleCount: 0,
       workDays: 0,
+      shiftbasePrintHours: 0,
     }
     if (!prevData) return t
     const days = selectedOperator === "all"
@@ -214,6 +233,18 @@ export default function PrintDataPage() {
       t.estimatedPrintMinutes += d.estimatedPrintMinutes
       t.idleCount += d.idleCount
       t.workDays++
+    }
+    if (prevData?.shiftbasePrintHoursByDate) {
+      if (selectedOperator === "all") {
+        t.shiftbasePrintHours = prevData.shiftbasePrintHours
+      } else {
+        const filteredDates = new Set(days.map(d => d.date))
+        for (const [date, hours] of Object.entries(prevData.shiftbasePrintHoursByDate)) {
+          if (filteredDates.has(date)) {
+            t.shiftbasePrintHours += hours
+          }
+        }
+      }
     }
     return t
   }, [prevData, selectedOperator])
@@ -353,7 +384,7 @@ export default function PrintDataPage() {
       </div>
 
       {/* KPI kaarten */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4 mb-8">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-gray-500 uppercase">Werkdagen</p>
@@ -391,6 +422,18 @@ export default function PrintDataPage() {
             <ChangeBadge current={totals.totalM2} previous={prevTotals.totalM2} label="m²" />
           </div>
           <p className="text-2xl font-bold text-indigo-600 mt-1">{totals.totalM2.toFixed(2)}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500 uppercase">Shiftbase Uren</p>
+            <ChangeBadge current={totals.shiftbasePrintHours * 60} previous={prevTotals.shiftbasePrintHours * 60} label="min" />
+          </div>
+          <p className="text-2xl font-bold text-teal-600 mt-1">
+            {totals.shiftbasePrintHours > 0
+              ? formatMinutes(Math.round(totals.shiftbasePrintHours * 60))
+              : "—"}
+          </p>
+          <p className="text-xs text-gray-400">geklokt Print team</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">

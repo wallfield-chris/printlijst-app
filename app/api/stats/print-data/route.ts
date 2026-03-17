@@ -266,10 +266,25 @@ export async function GET(request: NextRequest) {
       .map(s => ({ ...s, totalM2: Math.round(s.totalM2 * 100) / 100 }))
       .sort((a, b) => a.date.localeCompare(b.date))
 
+    // Haal Shiftbase printuren op uit DailyMetric
+    const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`
+    const toStr = `${to.getFullYear()}-${String(to.getMonth() + 1).padStart(2, "0")}-${String(to.getDate()).padStart(2, "0")}`
+    const dailyMetrics = await prisma.dailyMetric.findMany({
+      where: { date: { gte: fromStr, lte: toStr } },
+      select: { date: true, printHours: true },
+    })
+    const shiftbasePrintHours = Math.round(dailyMetrics.reduce((sum, m) => sum + m.printHours, 0) * 10) / 10
+    const shiftbasePrintHoursByDate: Record<string, number> = {}
+    for (const m of dailyMetrics) {
+      shiftbasePrintHoursByDate[m.date] = m.printHours
+    }
+
     return NextResponse.json({
       operators: operators.map(o => ({ id: o.id, name: o.name || o.email })),
       dayAnalyses,
       dailySummary: dailySummaryArr,
+      shiftbasePrintHours,
+      shiftbasePrintHoursByDate,
     })
   } catch (error) {
     console.error("Error in print-data stats:", error)
