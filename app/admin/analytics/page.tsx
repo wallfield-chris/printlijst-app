@@ -470,72 +470,129 @@ export default function PrintDataPage() {
       {/* Tab content */}
       {activeTab === "overview" && (
         <div className="space-y-6">
-          {/* Grafiek: Actieve tijd vs Idle per dag */}
+          {/* Grafiek: Shiftbase Uren vs Geschatte Printtijd per dag */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Actieve Tijd vs Idle Tijd per Dag</h2>
-            {dailyChartData.length > 0 ? (
-              <div>
-                <div className="h-72 flex items-end gap-1 border-b border-l border-gray-200 pl-1 pb-1 relative">
-                  {/* Y-axis label */}
-                  <div className="absolute -left-1 top-0 bottom-0 flex flex-col justify-between text-xs text-gray-400 -translate-x-full pr-2">
-                    <span>{formatMinutes(Math.max(...dailyChartData.map(d => d.totalActiveMinutes + d.totalIdleMinutes), 60))}</span>
-                    <span>0m</span>
-                  </div>
-                  {dailyChartData.map((day, i) => {
-                    const maxVal = Math.max(...dailyChartData.map(d => d.totalActiveMinutes + d.totalIdleMinutes), 60)
-                    const activeH = Math.max((day.totalActiveMinutes / maxVal) * 100, 0)
-                    const idleH = Math.max((day.totalIdleMinutes / maxVal) * 100, 0)
-                    return (
-                      <div key={i} className="flex-1 flex flex-col items-center justify-end gap-0 min-w-0 group relative">
-                        {/* Tooltip */}
-                        <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
-                          <div className="font-medium">{formatDate(day.date)}</div>
-                          <div className="text-blue-300">Actief: {formatMinutes(day.totalActiveMinutes)}</div>
-                          <div className="text-orange-300">Idle: {formatMinutes(day.totalIdleMinutes)}</div>
-                          <div className="text-gray-300">{day.jobCount} jobs</div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Shiftbase Uren vs Geschatte Printtijd per Dag</h2>
+            {dailyChartData.length > 0 ? (() => {
+              // Bereid data voor: combineer shiftbase uren en geschatte printtijd per dag
+              const chartPoints = dailyChartData.map(day => ({
+                date: day.date,
+                shiftbaseMinutes: Math.round((data?.shiftbasePrintHoursByDate?.[day.date] || 0) * 60),
+                estimatedMinutes: day.estimatedPrintMinutes,
+              }))
+              const maxMinutes = Math.max(
+                ...chartPoints.map(p => Math.max(p.shiftbaseMinutes, p.estimatedMinutes)),
+                60
+              )
+              const chartHeight = 288 // h-72 = 18rem = 288px
+              const chartWidth = 100 // percentage
+
+              const getY = (val: number) => chartHeight - (val / maxMinutes) * chartHeight
+              const stepX = chartPoints.length > 1 ? chartWidth / (chartPoints.length - 1) : 50
+
+              const shiftbasePath = chartPoints.map((p, i) =>
+                `${i === 0 ? "M" : "L"} ${i * stepX} ${getY(p.shiftbaseMinutes)}`
+              ).join(" ")
+              const estimatedPath = chartPoints.map((p, i) =>
+                `${i === 0 ? "M" : "L"} ${i * stepX} ${getY(p.estimatedMinutes)}`
+              ).join(" ")
+
+              // Y-axis: 5 stappen
+              const ySteps = 5
+              const yLabels = Array.from({ length: ySteps + 1 }, (_, i) =>
+                Math.round((maxMinutes / ySteps) * (ySteps - i))
+              )
+
+              return (
+                <div>
+                  <div className="relative" style={{ height: chartHeight }}>
+                    {/* Y-axis labels + grid */}
+                    {yLabels.map((val, i) => {
+                      const top = (i / ySteps) * 100
+                      return (
+                        <div key={i} className="absolute left-0 right-0" style={{ top: `${top}%` }}>
+                          <div className="absolute -left-2 -translate-x-full text-xs text-gray-400 -translate-y-1/2">
+                            {formatMinutes(val)}
+                          </div>
+                          <div className="border-t border-gray-100 w-full" />
                         </div>
-                        {/* Idle (top, oranje) */}
-                        <div
-                          className="w-full bg-orange-400 rounded-t-sm transition-all min-h-0"
-                          style={{ height: `${idleH}%` }}
-                        />
-                        {/* Active (bottom, blauw) */}
-                        <div
-                          className="w-full bg-blue-500 transition-all min-h-0"
-                          style={{ height: `${activeH}%` }}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-                {/* X-axis */}
-                <div className="flex gap-1 mt-1 pl-1">
-                  {dailyChartData.map((day, i) => (
-                    <div key={i} className="flex-1 text-center min-w-0">
-                      <span className="text-[10px] text-gray-400 truncate block">
-                        {dailyChartData.length <= 14
-                          ? formatDate(day.date)
-                          : i % Math.ceil(dailyChartData.length / 10) === 0
-                            ? formatDate(day.date)
-                            : ""
-                        }
-                      </span>
+                      )
+                    })}
+
+                    {/* SVG lijngrafiek */}
+                    <svg
+                      viewBox={`-2 -2 ${chartWidth + 4} ${chartHeight + 4}`}
+                      preserveAspectRatio="none"
+                      className="w-full h-full ml-1"
+                      style={{ overflow: "visible" }}
+                    >
+                      {/* Shiftbase lijn (teal) */}
+                      <path d={shiftbasePath} fill="none" stroke="#0d9488" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      {/* Geschatte Printtijd lijn (paars) */}
+                      <path d={estimatedPath} fill="none" stroke="#9333ea" strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />
+
+                      {/* Data punten + hover targets */}
+                      {chartPoints.map((p, i) => (
+                        <g key={i}>
+                          <circle cx={i * stepX} cy={getY(p.shiftbaseMinutes)} r="3" fill="#0d9488" className="opacity-70 hover:opacity-100" style={{ transition: "opacity 0.15s" }} />
+                          <circle cx={i * stepX} cy={getY(p.estimatedMinutes)} r="3" fill="#9333ea" className="opacity-70 hover:opacity-100" style={{ transition: "opacity 0.15s" }} />
+                        </g>
+                      ))}
+                    </svg>
+
+                    {/* Hover overlays met tooltips */}
+                    <div className="absolute inset-0 flex ml-1">
+                      {chartPoints.map((p, i) => {
+                        const diff = p.shiftbaseMinutes - p.estimatedMinutes
+                        const diffPct = p.estimatedMinutes > 0 ? Math.round((diff / p.estimatedMinutes) * 100) : 0
+                        return (
+                          <div key={i} className="flex-1 relative group">
+                            <div className="hidden group-hover:block absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2.5 whitespace-nowrap shadow-lg">
+                              <div className="font-medium mb-1">{formatDateLong(p.date)}</div>
+                              <div className="text-teal-300">Shiftbase: {formatMinutes(p.shiftbaseMinutes)}</div>
+                              <div className="text-purple-300">Gesch. Printtijd: {formatMinutes(p.estimatedMinutes)}</div>
+                              {diff !== 0 && (
+                                <div className={`mt-1 pt-1 border-t border-gray-700 ${diff > 0 ? "text-orange-300" : "text-green-300"}`}>
+                                  Verschil: {diff > 0 ? "+" : ""}{formatMinutes(Math.abs(diff))} ({diff > 0 ? "+" : ""}{diffPct}%)
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
-                  ))}
-                </div>
-                {/* Legend */}
-                <div className="flex gap-6 mt-4 text-sm text-gray-600">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-3 bg-blue-500 rounded-sm" />
-                    <span>Actieve tijd (tussen completions, &lt;5 min gaps)</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-3 bg-orange-400 rounded-sm" />
-                    <span>Idle / pauze (&gt;5 min gaps)</span>
+
+                  {/* X-axis */}
+                  <div className="flex mt-2 ml-1">
+                    {chartPoints.map((p, i) => (
+                      <div key={i} className="flex-1 text-center min-w-0">
+                        <span className="text-[10px] text-gray-400 truncate block">
+                          {chartPoints.length <= 14
+                            ? formatDate(p.date)
+                            : i % Math.ceil(chartPoints.length / 10) === 0
+                              ? formatDate(p.date)
+                              : ""
+                          }
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex gap-6 mt-4 text-sm text-gray-600">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-0.5 bg-teal-600 rounded" />
+                      <span>Shiftbase uren (geklokt Print team)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-0.5 bg-purple-600 rounded" style={{ borderTop: "2px dashed #9333ea" }} />
+                      <span>Geschatte printtijd (berekend)</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
+              )
+            })() : (
               <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
             )}
           </div>

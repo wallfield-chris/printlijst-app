@@ -267,10 +267,11 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date))
 
     // Haal Shiftbase printuren op uit DailyMetric
-    const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`
-    const toStr = `${to.getFullYear()}-${String(to.getMonth() + 1).padStart(2, "0")}-${String(to.getDate()).padStart(2, "0")}`
+    // Gebruik direct de query param strings (YYYY-MM-DD) om timezone-issues te voorkomen
+    const metricFromStr = startDate || `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`
+    const metricToStr = endDate || `${to.getFullYear()}-${String(to.getMonth() + 1).padStart(2, "0")}-${String(to.getDate()).padStart(2, "0")}`
     const dailyMetrics = await prisma.dailyMetric.findMany({
-      where: { date: { gte: fromStr, lte: toStr } },
+      where: { date: { gte: metricFromStr, lte: metricToStr } },
       select: { date: true, printHours: true },
     })
     const shiftbasePrintHours = Math.round(dailyMetrics.reduce((sum, m) => sum + m.printHours, 0) * 10) / 10
