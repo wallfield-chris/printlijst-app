@@ -94,25 +94,36 @@ export async function GET(request: NextRequest) {
 
     // Bouw een set van bestaande orderUuid+productUuid/sku combinaties
     // Inclusief completed/pushed: voorkomt dat al-gedrukte orders opnieuw geïmporteerd worden
+    // MAAR: als een completed/pushed job opnieuw backorder is, reset naar pending
     const existingJobKeys = new Set<string>()
+    const completedPushedJobMap = new Map<string, string>() // key → job id (alleen completed/pushed)
     const existingJobs = await prisma.printJob.findMany({
       where: { printStatus: { in: ["pending", "in_progress", "stock_covered", "completed", "pushed"] } },
-      select: { orderUuid: true, productUuid: true, sku: true, productName: true },
+      select: { id: true, orderUuid: true, productUuid: true, sku: true, productName: true, printStatus: true },
     })
     for (const job of existingJobs) {
+      const isCompletedOrPushed = job.printStatus === "completed" || job.printStatus === "pushed"
       if (job.orderUuid && job.productUuid) {
-        existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
+        const key = `${job.orderUuid}::${job.productUuid}`
+        existingJobKeys.add(key)
+        if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
       }
       if (job.orderUuid && job.sku) {
-        existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
+        const key = `${job.orderUuid}::sku::${job.sku}`
+        existingJobKeys.add(key)
+        if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
       }
       if (job.orderUuid && job.productName) {
-        existingJobKeys.add(`${job.orderUuid}::name::${job.productName}`)
+        const key = `${job.orderUuid}::name::${job.productName}`
+        existingJobKeys.add(key)
+        if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
       }
     }
 
     let imported = 0
     let skipped = 0
+    let requeued = 0
+    const requeuedJobIds = new Set<string>()
 
     for (const order of backorderOrders) {
       if (!order.uuid) continue
@@ -136,8 +147,32 @@ export async function GET(request: NextRequest) {
         const dupKeyProduct = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
         const dupKeySku = product.sku ? `${order.uuid}::sku::${product.sku}` : null
         const dupKeyName = `${order.uuid}::name::${product.productName || 'unknown'}`
-        if ((dupKeyProduct && existingJobKeys.has(dupKeyProduct)) || (dupKeySku && existingJobKeys.has(dupKeySku)) || existingJobKeys.has(dupKeyName)) {
-          skipped++
+        const matchedKey = (dupKeyProduct && existingJobKeys.has(dupKeyProduct)) ? dupKeyProduct
+          : (dupKeySku && existingJobKeys.has(dupKeySku)) ? dupKeySku
+          : existingJobKeys.has(dupKeyName) ? dupKeyName : null
+
+        if (matchedKey) {
+          // Check of het een completed/pushed job is die opnieuw geprint moet worden
+          const existingJobId = completedPushedJobMap.get(matchedKey)
+          if (existingJobId && !requeuedJobIds.has(existingJobId)) {
+            // Reset deze job naar pending zodat hij opnieuw geprint wordt
+            await prisma.printJob.update({
+              where: { id: existingJobId },
+              data: {
+                printStatus: "pending",
+                completedAt: null,
+                completedBy: null,
+                startedAt: null,
+                orderStatus: order.status,
+                backorder: true,
+              },
+            })
+            requeuedJobIds.add(existingJobId)
+            requeued++
+            console.log(`🔄 [auto-sync] Job ${existingJobId} gereset naar pending (order ${(order as any).externalDisplayId || order.uuid} opnieuw backorder)`)
+          } else {
+            skipped++
+          }
           continue
         }
 
@@ -274,8 +309,8 @@ export async function GET(request: NextRequest) {
     lastSyncTime = now
     lastSyncResult = { imported, checked: backorderOrders.length, skipped }
 
-    if (imported > 0) {
-      console.log(`🔄 Auto-sync: ${imported} nieuwe printjobs geïmporteerd (${backorderOrders.length} orders gecheckt)`)
+    if (imported > 0 || requeued > 0) {
+      console.log(`🔄 Auto-sync: ${imported} nieuwe printjobs geïmporteerd, ${requeued} opnieuw in wachtrij (${backorderOrders.length} orders gecheckt)`)
     }
 
     // === DB-BASED VOORRAAD-ALLOCATIE ===

@@ -194,16 +194,31 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     send({ type: "progress", step: 3, totalSteps: 5, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
 
     // === Dedup lookup: bestaande actieve jobs (inclusief stock_covered om re-import te voorkomen) ===
+    // Voor completed/pushed jobs: als de order opnieuw backorder is, resetten we die naar pending
     const existingJobKeys = new Set<string>()
+    const completedPushedJobMap = new Map<string, string>() // key → job id (alleen completed/pushed)
     if (!resetMode) {
       const existingJobs = await prisma.printJob.findMany({
         where: { printStatus: { in: ["pending", "in_progress", "stock_covered", "completed", "pushed"] } },
-        select: { orderUuid: true, productUuid: true, sku: true, productName: true },
+        select: { id: true, orderUuid: true, productUuid: true, sku: true, productName: true, printStatus: true },
       })
       for (const job of existingJobs) {
-        if (job.orderUuid && job.productUuid) existingJobKeys.add(`${job.orderUuid}::${job.productUuid}`)
-        if (job.orderUuid && job.sku) existingJobKeys.add(`${job.orderUuid}::sku::${job.sku}`)
-        if (job.orderUuid && job.productName) existingJobKeys.add(`${job.orderUuid}::name::${job.productName}`)
+        const isCompletedOrPushed = job.printStatus === "completed" || job.printStatus === "pushed"
+        if (job.orderUuid && job.productUuid) {
+          const key = `${job.orderUuid}::${job.productUuid}`
+          existingJobKeys.add(key)
+          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+        }
+        if (job.orderUuid && job.sku) {
+          const key = `${job.orderUuid}::sku::${job.sku}`
+          existingJobKeys.add(key)
+          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+        }
+        if (job.orderUuid && job.productName) {
+          const key = `${job.orderUuid}::name::${job.productName}`
+          existingJobKeys.add(key)
+          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+        }
       }
     }
 
@@ -286,6 +301,8 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     let totalDuplicates = 0
     let totalExcluded = 0
     let totalPicked = 0
+    let totalRequeued = 0
+    const requeuedJobIds = new Set<string>()
     const errors: { orderUuid: string; error: string }[] = []
 
     for (let orderIdx = 0; orderIdx < orders.length; orderIdx++) {
@@ -305,8 +322,32 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
           const dupKey1 = product.productUuid ? `${order.uuid}::${product.productUuid}` : null
           const dupKey2 = product.sku ? `${order.uuid}::sku::${product.sku}` : null
           const dupKey3 = `${order.uuid}::name::${product.productName || 'unknown'}`
-          if ((dupKey1 && existingJobKeys.has(dupKey1)) || (dupKey2 && existingJobKeys.has(dupKey2)) || existingJobKeys.has(dupKey3)) {
-            totalDuplicates++
+          const matchedKey = (dupKey1 && existingJobKeys.has(dupKey1)) ? dupKey1
+            : (dupKey2 && existingJobKeys.has(dupKey2)) ? dupKey2
+            : existingJobKeys.has(dupKey3) ? dupKey3 : null
+
+          if (matchedKey) {
+            // Check of het een completed/pushed job is die opnieuw geprint moet worden
+            const existingJobId = completedPushedJobMap.get(matchedKey)
+            if (existingJobId && !requeuedJobIds.has(existingJobId)) {
+              // Reset deze job naar pending zodat hij opnieuw geprint wordt
+              await prisma.printJob.update({
+                where: { id: existingJobId },
+                data: {
+                  printStatus: "pending",
+                  completedAt: null,
+                  completedBy: null,
+                  startedAt: null,
+                  orderStatus: order.status,
+                  backorder: true,
+                },
+              })
+              requeuedJobIds.add(existingJobId)
+              totalRequeued++
+              console.log(`🔄 Job ${existingJobId} gereset naar pending (order ${order.externalDisplayId || order.uuid} opnieuw backorder)`)
+            } else {
+              totalDuplicates++
+            }
             continue
           }
 
@@ -537,13 +578,14 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
 
     console.log(`📊 Voorraad-allocatie: ${totalInStock} printjobs gemarkeerd als stock_covered (${stockCheckedProducts} producten gecheckt)`)
 
-    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked, ${duplicatesRemoved} duplicates removed`)
+    console.log(`\n✅ Sync complete: ${totalImported} imported, ${totalRequeued} requeued, ${totalDuplicates} dupes, ${totalExcluded} excluded, ${totalInStock} in-stock, ${totalPicked} picked, ${duplicatesRemoved} duplicates removed`)
 
     const resultData = {
       success: true,
-      message: `Sync complete: ${totalImported} jobs created`,
+      message: `Sync complete: ${totalImported} jobs created${totalRequeued > 0 ? `, ${totalRequeued} opnieuw in wachtrij` : ''}`,
       stats: {
         imported: totalImported,
+        requeued: totalRequeued,
         duplicates: totalDuplicates,
         excluded: totalExcluded,
         inStock: totalInStock,
@@ -564,7 +606,7 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
       errors: errors.length > 0 ? errors : undefined,
     }
 
-    send({ type: "done", step: 5, totalSteps: 5, message: `${totalImported} printjobs geïmporteerd${totalInStock > 0 ? `, ${totalInStock} verborgen (voorraad)` : ''}`, result: resultData.stats })
+    send({ type: "done", step: 5, totalSteps: 5, message: `${totalImported} printjobs geïmporteerd${totalRequeued > 0 ? `, ${totalRequeued} opnieuw in wachtrij` : ''}${totalInStock > 0 ? `, ${totalInStock} verborgen (voorraad)` : ''}`, result: resultData.stats })
 
     return resultData
 }
