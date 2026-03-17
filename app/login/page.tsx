@@ -84,12 +84,6 @@ export default function LoginPage() {
             {loading ? "Bezig met inloggen..." : "Inloggen"}
           </button>
         </form>
-
-        <div className="mt-6 text-sm text-gray-600 border-t pt-4">
-          <p className="font-semibold mb-2">Test accounts:</p>
-          <p>Admin: admin@printlijst.nl / admin123</p>
-          <p>Werknemer: jan@printlijst.nl / werknemer123</p>
-        </div>
       </div>
     </div>
   )
