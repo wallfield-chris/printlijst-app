@@ -83,6 +83,11 @@ function WerknemersTab() {
   const [formPassword, setFormPassword] = useState("")
   const [formRole, setFormRole] = useState("employee")
 
+  // Password reset state
+  const [resetUser, setResetUser] = useState<User | null>(null)
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetSuccess, setResetSuccess] = useState("")
+
   useEffect(() => {
     fetchUsers()
   }, [])
@@ -146,6 +151,30 @@ function WerknemersTab() {
     }
   }
 
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!resetUser) return
+    try {
+      const response = await fetch(`/api/users/${resetUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: resetPassword }),
+      })
+      if (response.ok) {
+        setResetUser(null)
+        setResetPassword("")
+        setResetSuccess(`Wachtwoord voor ${resetUser.name} is succesvol gewijzigd`)
+        setTimeout(() => setResetSuccess(""), 5000)
+      } else {
+        const data = await response.json()
+        setError(data.error || "Kan wachtwoord niet resetten")
+      }
+    } catch (err) {
+      setError("Kan wachtwoord niet resetten")
+      console.error(err)
+    }
+  }
+
   const resetForm = () => {
     setFormName("")
     setFormEmail("")
@@ -166,6 +195,54 @@ function WerknemersTab() {
       {error && (
         <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
           {error}
+        </div>
+      )}
+
+      {resetSuccess && (
+        <div className="mb-6 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg">
+          ✅ {resetSuccess}
+        </div>
+      )}
+
+      {/* Wachtwoord Reset Modal */}
+      {resetUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-2">Wachtwoord Resetten</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Nieuw wachtwoord instellen voor <strong>{resetUser.name}</strong> ({resetUser.email})
+            </p>
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nieuw Wachtwoord</label>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  required
+                  minLength={6}
+                  placeholder="Minimaal 6 tekens"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setResetUser(null); setResetPassword("") }}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Wachtwoord Opslaan
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -285,6 +362,12 @@ function WerknemersTab() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <button
+                      onClick={() => setResetUser(user)}
+                      className="text-blue-600 hover:text-blue-900 mr-4"
+                    >
+                      Wachtwoord resetten
+                    </button>
                     <button
                       onClick={() => handleDelete(user.id)}
                       className="text-red-600 hover:text-red-900"
