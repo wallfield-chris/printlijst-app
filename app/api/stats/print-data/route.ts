@@ -7,6 +7,7 @@ const PRINT_CONFIGS = [
   { keywords: ["60x90", "60 x 90 cm"], perRun: 5, m2: 0.54 },
   { keywords: ["80x120", "80 x 120 cm"], perRun: 2, m2: 0.96 },
   { keywords: ["100x150", "100 x 150 cm"], perRun: 2, m2: 1.5 },
+  { keywords: ["salontafel"], perRun: 2, m2: 0 },
 ]
 
 const IDLE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minuten

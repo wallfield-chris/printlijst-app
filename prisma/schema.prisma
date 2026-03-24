@@ -22,6 +22,7 @@ model User {
   sessions  Session[]
   printJobs PrintJob[] @relation("CompletedBy")
   logbookEntries LogbookEntry[] @relation("LogbookEntries")
+  wasteReports WasteReport[] @relation("WasteReports")
 }
 
 model Session {
@@ -238,6 +239,23 @@ model DailyMetric {
   updatedAt          DateTime @updatedAt
 
   @@index([date])
+}
+
+// ============================================================
+// Waste / Afval — meldingen van verspild materiaal per maat
+// ============================================================
+model WasteReport {
+  id        String   @id @default(cuid())
+  size      String   // Maat, bijv. "40x60", "60x90", "80x120" etc.
+  quantity  Int      // Aantal verspild
+  reason    String?  // Optionele reden
+  userId    String
+  user      User     @relation("WasteReports", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([size])
+  @@index([userId])
 }
 
 // ============================================================

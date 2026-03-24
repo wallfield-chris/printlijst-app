@@ -58,6 +58,13 @@ export default function PrintJobsPage() {
   const [selectedLocation, setSelectedLocation] = useState<{ uuid: string; name: string } | null>(null)
   const [pushing, setPushing] = useState(false)
   const [pushResult, setPushResult] = useState<{ pushed: number; failed: number; message: string; failedProducts?: { name: string; error: string }[] } | null>(null)
+  // Waste / Afval melden
+  const [wasteOpen, setWasteOpen] = useState(false)
+  const [wasteAmounts, setWasteAmounts] = useState<Record<string, number>>({
+    "40x60": 0, "60x90": 0, "80x120": 0, "100x150": 0, "salontafel": 0,
+  })
+  const [wasteSubmitting, setWasteSubmitting] = useState(false)
+  const [wasteResult, setWasteResult] = useState<{ success: boolean; message: string } | null>(null)
   // Real-time polling
   const [pollHash, setPollHash] = useState<string | null>(null)
   const [isLive, setIsLive] = useState(false)
@@ -406,6 +413,7 @@ export default function PrintJobsPage() {
     { keywords: ['60x90', '60 x 90'], perRun: 5 },
     { keywords: ['80x120', '80 x 120'], perRun: 2 },
     { keywords: ['100x150', '100 x 150'], perRun: 2 },
+    { keywords: ['salontafel'], perRun: 2 },
   ]
 
   const calculatePrintTime = (jobs: PrintJob[]): string => {
@@ -650,6 +658,49 @@ export default function PrintJobsPage() {
     })
   }
 
+  // Waste / Afval melden
+  const WASTE_SIZES = [
+    { key: "40x60", label: "40×60 cm" },
+    { key: "60x90", label: "60×90 cm" },
+    { key: "80x120", label: "80×120 cm" },
+    { key: "100x150", label: "100×150 cm" },
+    { key: "salontafel", label: "Salontafel" },
+  ]
+
+  const openWasteModal = () => {
+    setWasteAmounts({ "40x60": 0, "60x90": 0, "80x120": 0, "100x150": 0, "salontafel": 0 })
+    setWasteResult(null)
+    setWasteOpen(true)
+  }
+
+  const handleWasteSubmit = async () => {
+    const items = Object.entries(wasteAmounts)
+      .filter(([, qty]) => qty > 0)
+      .map(([size, quantity]) => ({ size, quantity }))
+
+    if (items.length === 0) return
+
+    setWasteSubmitting(true)
+    try {
+      const res = await fetch("/api/waste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        setWasteResult({ success: false, message: data.error || "Fout bij versturen" })
+        return
+      }
+      const data = await res.json()
+      setWasteResult({ success: true, message: `${data.count} afvalmelding(en) opgeslagen!` })
+    } catch {
+      setWasteResult({ success: false, message: "Netwerkfout bij versturen" })
+    } finally {
+      setWasteSubmitting(false)
+    }
+  }
+
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case "urgent": return "bg-red-100 text-red-800 border-red-300"
@@ -793,6 +844,12 @@ export default function PrintJobsPage() {
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {syncing ? "⏳ Bezig..." : "📦 Orders Ophalen"}
+            </button>
+            <button
+              onClick={openWasteModal}
+              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
+              🗑️ Waste / Afval melden
             </button>
             <button
               onClick={refreshWithStatusSync}
@@ -1202,6 +1259,83 @@ export default function PrintJobsPage() {
                     className="px-5 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                   >
                     {pushing ? "⏳ Bezig met pushen..." : "📦 Push naar voorraad"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Waste / Afval melden modal */}
+      {wasteOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-8">
+            <div className="flex justify-between items-start mb-6">
+              <h2 className="text-xl font-bold text-gray-900">🗑️ Waste / Afval melden</h2>
+              <button
+                onClick={() => setWasteOpen(false)}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {wasteResult ? (
+              <div className="text-center">
+                <div className={`text-5xl mb-4 ${wasteResult.success ? "text-green-500" : "text-red-500"}`}>
+                  {wasteResult.success ? "✅" : "❌"}
+                </div>
+                <p className="text-gray-800 font-medium mb-4">{wasteResult.message}</p>
+                <button
+                  onClick={() => setWasteOpen(false)}
+                  className="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                >
+                  Sluiten
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3 mb-6">
+                  {WASTE_SIZES.map(({ key, label }) => (
+                    <div key={key} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                      <span className="font-medium text-gray-800">{label}</span>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setWasteAmounts((prev) => ({ ...prev, [key]: Math.max(0, prev[key] - 1) }))}
+                          className="w-9 h-9 flex items-center justify-center rounded-full bg-red-100 text-red-700 hover:bg-red-200 font-bold text-lg transition-colors"
+                        >
+                          −
+                        </button>
+                        <span className="w-8 text-center font-semibold text-lg tabular-nums">
+                          {wasteAmounts[key]}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setWasteAmounts((prev) => ({ ...prev, [key]: prev[key] + 1 }))}
+                          className="w-9 h-9 flex items-center justify-center rounded-full bg-green-100 text-green-700 hover:bg-green-200 font-bold text-lg transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setWasteOpen(false)}
+                    className="px-5 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                  >
+                    Annuleren
+                  </button>
+                  <button
+                    onClick={handleWasteSubmit}
+                    disabled={wasteSubmitting || Object.values(wasteAmounts).every((v) => v === 0)}
+                    className="px-5 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  >
+                    {wasteSubmitting ? "⏳ Bezig..." : "📨 Versturen"}
                   </button>
                 </div>
               </>

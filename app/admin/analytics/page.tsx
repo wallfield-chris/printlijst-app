@@ -703,6 +703,7 @@ export default function PrintDataPage() {
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Laatste</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actief</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Idle</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shiftbase</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Jobs</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">M²</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase"></th>
@@ -711,7 +712,7 @@ export default function PrintDataPage() {
               <tbody className="divide-y divide-gray-200">
                 {filteredDays.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">Geen data beschikbaar</td>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">Geen data beschikbaar</td>
                   </tr>
                 ) : (
                   filteredDays.map((day) => {
@@ -729,6 +730,11 @@ export default function PrintDataPage() {
                           <td className="px-4 py-3 text-sm text-right text-gray-600">{formatTime(day.lastCompletion)}</td>
                           <td className="px-4 py-3 text-sm text-right font-medium text-blue-600">{formatMinutes(day.totalActiveMinutes)}</td>
                           <td className="px-4 py-3 text-sm text-right font-medium text-orange-500">{formatMinutes(day.totalIdleMinutes)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-medium text-purple-600">
+                            {data?.shiftbasePrintHoursByDate?.[day.date]
+                              ? `${Math.floor(data.shiftbasePrintHoursByDate[day.date])}u ${Math.round((data.shiftbasePrintHoursByDate[day.date] % 1) * 60)}m`
+                              : <span className="text-gray-400">—</span>}
+                          </td>
                           <td className="px-4 py-3 text-sm text-right text-gray-600">{day.jobCount}</td>
                           <td className="px-4 py-3 text-sm text-right text-gray-600">{day.totalM2.toFixed(2)}</td>
                           <td className="px-4 py-3 text-center">
@@ -738,7 +744,7 @@ export default function PrintDataPage() {
 
                         {isExpanded && (
                           <tr>
-                            <td colSpan={9} className="bg-gray-50 px-4 py-4">
+                            <td colSpan={10} className="bg-gray-50 px-4 py-4">
                               {/* Timeline visualisatie */}
                               <div className="mb-4">
                                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Activiteit Timeline</h4>
