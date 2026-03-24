@@ -63,17 +63,31 @@ export async function GET(request: NextRequest) {
     const missingFile = searchParams.get("missingFile")
 
     const where: any = {
-      // Sluit altijd afgeronde/geannuleerde/verzonden orders uit
-      // Sluit ook 'pushed' jobs uit (die zijn al naar voorraad gepusht)
+      // Sluit 'pushed' jobs uit (die zijn al naar voorraad gepusht)
+      // Voltooide jobs (printStatus=completed) tonen we ALTIJD, ook als de order
+      // in GoedGepickt al afgerond is — ze moeten nog naar voorraad gepusht worden.
+      // Voor niet-voltooide jobs: sluit afgeronde/geannuleerde/verzonden orders uit.
       AND: [
         {
-          OR: [
-            { orderStatus: null },
-            { orderStatus: { notIn: ['completed', 'cancelled', 'shipped'] } },
-          ],
+          printStatus: { not: 'pushed' },
         },
         {
-          printStatus: { not: 'pushed' },
+          OR: [
+            // Voltooide jobs altijd tonen (ongeacht orderStatus)
+            { printStatus: 'completed' },
+            // Niet-voltooide jobs: alleen als de order nog actief is
+            {
+              AND: [
+                { printStatus: { not: 'completed' } },
+                {
+                  OR: [
+                    { orderStatus: null },
+                    { orderStatus: { notIn: ['completed', 'cancelled', 'shipped'] } },
+                  ],
+                },
+              ],
+            },
+          ],
         },
       ],
     }

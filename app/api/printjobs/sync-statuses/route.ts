@@ -153,13 +153,24 @@ async function runSyncStatusesLogic(send: SendFn = noopSend) {
 
       if (!KEEP_STATUSES.includes(newStatus)) {
         // Order is NIET meer backorder (bijv. in de wacht, afgerond, verzonden, geannuleerd)
-        // → verwijder alle bijbehorende printjobs
+        // Verwijder alleen NIET-voltooide jobs (pending/in_progress/stock_covered)
+        // Voltooide jobs (completed) blijven staan totdat ze naar voorraad zijn gepusht
         const result = await prisma.printJob.deleteMany({
-          where: { orderUuid },
+          where: {
+            orderUuid,
+            printStatus: { notIn: ["completed", "pushed"] },
+          },
         })
         deletedCount += result.count
+
+        // Update orderStatus op overgebleven (completed) jobs
+        await prisma.printJob.updateMany({
+          where: { orderUuid, printStatus: "completed" },
+          data: { orderStatus: newStatus },
+        })
+
         console.log(
-          `🗑️  Order ${orderUuid} is '${newStatus}' (niet meer backorder) → ${result.count} printjob(s) verwijderd`
+          `🗑️  Order ${orderUuid} is '${newStatus}' (niet meer backorder) → ${result.count} niet-voltooide job(s) verwijderd`
         )
       } else {
         // Nog steeds backorder — update status en controleer per product

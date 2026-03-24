@@ -75,6 +75,7 @@ export async function GET(request: NextRequest) {
         productUuid: true,
         quantity: true,
         orderStatus: true,
+        printStatus: true,
       },
     })
 
@@ -110,14 +111,26 @@ export async function GET(request: NextRequest) {
         if (!newStatus) continue
 
         if (COMPLETED_STATUSES.includes(newStatus)) {
-          // Order is afgerond/verzonden/geannuleerd → DIRECT verwijderen
+          // Order is afgerond/verzonden/geannuleerd
+          // Verwijder alleen NIET-voltooide jobs (pending/in_progress/stock_covered)
+          // Voltooide jobs (completed) blijven staan totdat ze naar voorraad zijn gepusht
           const result = await prisma.printJob.deleteMany({
-            where: { orderUuid },
+            where: {
+              orderUuid,
+              printStatus: { notIn: ["completed", "pushed"] },
+            },
           })
           deletedCount += result.count
-          deletedOrders.push(orderUuid)
+          if (result.count > 0) deletedOrders.push(orderUuid)
+
+          // Update orderStatus op overgebleven (completed) jobs zodat de status zichtbaar is
+          await prisma.printJob.updateMany({
+            where: { orderUuid, printStatus: "completed" },
+            data: { orderStatus: newStatus },
+          })
+
           console.log(
-            `🗑️  [auto-check] Order ${orderUuid} is '${newStatus}' → ${result.count} printjob(s) VERWIJDERD`
+            `🗑️  [auto-check] Order ${orderUuid} is '${newStatus}' → ${result.count} niet-voltooide job(s) VERWIJDERD`
           )
         } else {
           // Update orderStatus als die veranderd is
@@ -146,11 +159,17 @@ export async function GET(request: NextRequest) {
             const needed = liveProduct.productQuantity ?? job.quantity ?? 1
 
             if (picked >= needed) {
-              await prisma.printJob.delete({ where: { id: job.id } })
-              deletedCount++
-              console.log(
-                `   ✅ [auto-check] Product ${job.sku} al verzonden (picked: ${picked}/${needed}) → VERWIJDERD`
-              )
+              // Alleen verwijderen als het NIET al voltooid (geprint) is
+              // Voltooide jobs moeten eerst naar voorraad gepusht worden
+              if (job.printStatus === "completed" || job.printStatus === "pushed") {
+                // Skip — dit is al een voltooide/gepushte job
+              } else {
+                await prisma.printJob.delete({ where: { id: job.id } })
+                deletedCount++
+                console.log(
+                  `   ✅ [auto-check] Product ${job.sku} al verzonden (picked: ${picked}/${needed}) → VERWIJDERD`
+                )
+              }
               continue
             }
 
