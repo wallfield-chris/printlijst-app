@@ -101,6 +101,7 @@ export default function PrintDataPage() {
   const [endDate, setEndDate] = useState("")
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [expandedSession, setExpandedSession] = useState<string | null>(null)
+  const [selectedChartDay, setSelectedChartDay] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "idle">("overview")
 
   useEffect(() => {
@@ -329,6 +330,43 @@ export default function PrintDataPage() {
     return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date))
   }, [data, selectedOperator, filteredDays])
 
+  // Format breakdown per dag (voor klik-op-dag detail)
+  const FORMAT_LABELS: Record<string, string> = {
+    "40x60": "40×60 cm",
+    "60x90": "60×90 cm",
+    "80x120": "80×120 cm",
+    "100x150": "100×150 cm",
+    "salontafel": "Salontafel",
+  }
+  const FORMAT_COLORS: Record<string, string> = {
+    "40x60": "#3B82F6",
+    "60x90": "#10B981",
+    "80x120": "#F59E0B",
+    "100x150": "#EF4444",
+    "salontafel": "#8B5CF6",
+  }
+
+  const getFormatBreakdown = (date: string) => {
+    if (!data) return []
+    const daysForDate = data.dayAnalyses.filter(d => {
+      if (d.date !== date) return false
+      if (selectedOperator !== "all" && d.operatorId !== selectedOperator) return false
+      return true
+    })
+    const byFormat: Record<string, { qty: number; jobs: number }> = {}
+    for (const day of daysForDate) {
+      for (const c of day.completions) {
+        const fmt = c.format || "overig"
+        if (!byFormat[fmt]) byFormat[fmt] = { qty: 0, jobs: 0 }
+        byFormat[fmt].qty += c.quantity
+        byFormat[fmt].jobs += 1
+      }
+    }
+    return Object.entries(byFormat)
+      .sort(([, a], [, b]) => b.qty - a.qty)
+      .map(([format, data]) => ({ format, ...data }))
+  }
+
   if (loading && !data) {
     return (
       <div className="p-8">
@@ -540,13 +578,21 @@ export default function PrintDataPage() {
                       ))}
                     </svg>
 
-                    {/* Hover overlays met tooltips */}
+                    {/* Hover overlays met tooltips — klikbaar */}
                     <div className="absolute inset-0 flex ml-1">
                       {chartPoints.map((p, i) => {
                         const diff = p.shiftbaseMinutes - p.estimatedMinutes
                         const diffPct = p.estimatedMinutes > 0 ? Math.round((diff / p.estimatedMinutes) * 100) : 0
+                        const isSelected = selectedChartDay === p.date
                         return (
-                          <div key={i} className="flex-1 relative group">
+                          <div
+                            key={i}
+                            className="flex-1 relative group cursor-pointer"
+                            onClick={() => setSelectedChartDay(isSelected ? null : p.date)}
+                          >
+                            {isSelected && (
+                              <div className="absolute inset-0 bg-blue-500/10 border-x border-blue-300/40" />
+                            )}
                             <div className="hidden group-hover:block absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2.5 whitespace-nowrap shadow-lg">
                               <div className="font-medium mb-1">{formatDateLong(p.date)}</div>
                               <div className="text-teal-300">Shiftbase: {formatMinutes(p.shiftbaseMinutes)}</div>
@@ -556,6 +602,7 @@ export default function PrintDataPage() {
                                   Verschil: {diff > 0 ? "+" : ""}{formatMinutes(Math.abs(diff))} ({diff > 0 ? "+" : ""}{diffPct}%)
                                 </div>
                               )}
+                              <div className="mt-1 pt-1 border-t border-gray-700 text-gray-400">Klik voor details</div>
                             </div>
                           </div>
                         )
@@ -590,6 +637,78 @@ export default function PrintDataPage() {
                       <span>Geschatte printtijd (berekend)</span>
                     </div>
                   </div>
+
+                  {/* Klik-op-dag detail panel */}
+                  {selectedChartDay && (() => {
+                    const breakdown = getFormatBreakdown(selectedChartDay)
+                    const dayData = dailyChartData.find(d => d.date === selectedChartDay)
+                    if (!dayData) return null
+                    const shiftMin = Math.round((data?.shiftbasePrintHoursByDate?.[selectedChartDay] || 0) * 60)
+                    return (
+                      <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 animate-in fade-in">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-semibold text-gray-900">
+                            📋 {formatDateLong(selectedChartDay)}
+                          </h3>
+                          <button
+                            onClick={() => setSelectedChartDay(null)}
+                            className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                          <div className="bg-white rounded-lg p-3 text-center">
+                            <p className="text-xs text-gray-500">Jobs</p>
+                            <p className="text-lg font-bold text-gray-900">{dayData.jobCount}</p>
+                          </div>
+                          <div className="bg-white rounded-lg p-3 text-center">
+                            <p className="text-xs text-gray-500">Stuks</p>
+                            <p className="text-lg font-bold text-gray-900">{dayData.totalQuantity}</p>
+                          </div>
+                          <div className="bg-white rounded-lg p-3 text-center">
+                            <p className="text-xs text-gray-500">M²</p>
+                            <p className="text-lg font-bold text-indigo-600">{dayData.totalM2.toFixed(2)}</p>
+                          </div>
+                          <div className="bg-white rounded-lg p-3 text-center">
+                            <p className="text-xs text-gray-500">Printtijd</p>
+                            <p className="text-lg font-bold text-purple-600">{formatMinutes(dayData.estimatedPrintMinutes)}</p>
+                          </div>
+                        </div>
+                        {breakdown.length > 0 ? (
+                          <div>
+                            <p className="text-sm font-medium text-gray-700 mb-2">Verdeling per formaat:</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {breakdown.map(({ format, qty, jobs }) => (
+                                <div key={format} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2">
+                                  <div
+                                    className="w-3 h-3 rounded-sm shrink-0"
+                                    style={{ backgroundColor: FORMAT_COLORS[format] || "#6B7280" }}
+                                  />
+                                  <span className="font-medium text-gray-800">
+                                    {qty}× {FORMAT_LABELS[format] || format}
+                                  </span>
+                                  <span className="text-xs text-gray-400 ml-auto">{jobs} job{jobs !== 1 ? "s" : ""}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">Geen format-data beschikbaar voor deze dag.</p>
+                        )}
+                        {shiftMin > 0 && (
+                          <div className="mt-3 pt-3 border-t border-blue-200 text-sm text-gray-600">
+                            Shiftbase uren: <span className="font-medium text-teal-700">{formatMinutes(shiftMin)}</span>
+                            {dayData.estimatedPrintMinutes > 0 && (
+                              <span className="ml-2 text-gray-400">
+                                (verschil: {shiftMin > dayData.estimatedPrintMinutes ? "+" : ""}{formatMinutes(shiftMin - dayData.estimatedPrintMinutes)})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })() : (
@@ -606,15 +725,21 @@ export default function PrintDataPage() {
                   {dailyChartData.map((day, i) => {
                     const maxJobs = Math.max(...dailyChartData.map(d => d.jobCount), 5)
                     const h = Math.max((day.jobCount / maxJobs) * 100, day.jobCount > 0 ? 2 : 0)
+                    const isSelected = selectedChartDay === day.date
                     return (
-                      <div key={i} className="flex-1 flex items-end justify-center min-w-0 group relative">
+                      <div
+                        key={i}
+                        className="flex-1 flex items-end justify-center min-w-0 group relative cursor-pointer"
+                        onClick={() => setSelectedChartDay(isSelected ? null : day.date)}
+                      >
                         <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
                           <div className="font-medium">{formatDate(day.date)}</div>
                           <div>{day.jobCount} jobs ({day.totalQuantity} stuks)</div>
                           <div>{day.totalM2.toFixed(2)} m²</div>
+                          <div className="text-gray-400 mt-1 pt-1 border-t border-gray-700">Klik voor details</div>
                         </div>
                         <div
-                          className="w-full bg-green-500 rounded-t-sm transition-all"
+                          className={`w-full rounded-t-sm transition-all ${isSelected ? "bg-green-700 ring-2 ring-green-400" : "bg-green-500"}`}
                           style={{ height: `${h}%` }}
                         />
                       </div>
@@ -635,6 +760,36 @@ export default function PrintDataPage() {
                     </div>
                   ))}
                 </div>
+
+                {/* Klik-op-dag detail panel */}
+                {selectedChartDay && (() => {
+                  const breakdown = getFormatBreakdown(selectedChartDay)
+                  const dayData = dailyChartData.find(d => d.date === selectedChartDay)
+                  if (!dayData) return null
+                  return (
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold text-gray-900">
+                          📋 {formatDateLong(selectedChartDay)} — {dayData.jobCount} jobs, {dayData.totalQuantity} stuks
+                        </h3>
+                        <button onClick={() => setSelectedChartDay(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+                      </div>
+                      {breakdown.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {breakdown.map(({ format, qty, jobs }) => (
+                            <div key={format} className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 border border-green-100">
+                              <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: FORMAT_COLORS[format] || "#6B7280" }} />
+                              <span className="font-medium text-sm text-gray-800">{qty}× {FORMAT_LABELS[format] || format}</span>
+                              <span className="text-xs text-gray-400">({jobs} job{jobs !== 1 ? "s" : ""})</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500">Geen format-data voor deze dag.</p>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             ) : (
               <div className="text-center py-12 text-gray-500">Geen data beschikbaar</div>
@@ -650,14 +805,20 @@ export default function PrintDataPage() {
                   {dailyChartData.map((day, i) => {
                     const maxM2 = Math.max(...dailyChartData.map(d => d.totalM2), 1)
                     const h = Math.max((day.totalM2 / maxM2) * 100, day.totalM2 > 0 ? 2 : 0)
+                    const isSelected = selectedChartDay === day.date
                     return (
-                      <div key={i} className="flex-1 flex items-end justify-center min-w-0 group relative">
+                      <div
+                        key={i}
+                        className="flex-1 flex items-end justify-center min-w-0 group relative cursor-pointer"
+                        onClick={() => setSelectedChartDay(isSelected ? null : day.date)}
+                      >
                         <div className="hidden group-hover:block absolute bottom-full mb-2 z-10 bg-gray-900 text-white text-xs rounded-lg p-2 whitespace-nowrap">
                           <div className="font-medium">{formatDate(day.date)}</div>
                           <div>{day.totalM2.toFixed(2)} m²</div>
+                          <div className="text-gray-400 mt-1 pt-1 border-t border-gray-700">Klik voor details</div>
                         </div>
                         <div
-                          className="w-full bg-indigo-500 rounded-t-sm transition-all"
+                          className={`w-full rounded-t-sm transition-all ${isSelected ? "bg-indigo-700 ring-2 ring-indigo-400" : "bg-indigo-500"}`}
                           style={{ height: `${h}%` }}
                         />
                       </div>
