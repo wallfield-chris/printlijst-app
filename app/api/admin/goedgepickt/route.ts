@@ -362,8 +362,11 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(responseData)
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in admin goedgepickt stats:", error)
-    return NextResponse.json({ error: "Fout bij ophalen van GoedGepickt data" }, { status: 500 })
+    return NextResponse.json({ 
+      error: "Fout bij ophalen van GoedGepickt data",
+      detail: error?.message || String(error),
+    }, { status: 500 })
   }
 }

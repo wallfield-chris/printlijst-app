@@ -261,8 +261,8 @@ export default function GoedgepicktPage() {
       }
       const res = await fetch(`/api/admin/goedgepickt?${params}`)
       if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Fout bij ophalen")
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || data.error || `HTTP ${res.status}`)
       }
       const data = await res.json()
       if (data.needsSync) {
