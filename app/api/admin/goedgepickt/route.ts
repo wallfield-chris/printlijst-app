@@ -89,6 +89,7 @@ function aggregateMetrics(metrics: any[]) {
   let totalPrintHours = 0
   const allProcessingDays: number[] = []
   const employeeMap: Record<string, { totalHours: number; daysSet: Set<string> }> = {}
+  const printEmployeeMap: Record<string, { totalHours: number; daysSet: Set<string> }> = {}
   const teamMap: Record<string, { totalHours: number; daysSet: Set<string> }> = {}
 
   for (const m of metrics) {
@@ -113,6 +114,18 @@ function aggregateMetrics(metrics: any[]) {
           if (!employeeMap[e.name]) employeeMap[e.name] = { totalHours: 0, daysSet: new Set() }
           employeeMap[e.name].totalHours += e.hours
           employeeMap[e.name].daysSet.add(m.date)
+        }
+      } catch {}
+    }
+
+    // Print employees
+    if (m.printEmployees) {
+      try {
+        const emps = JSON.parse(m.printEmployees) as { name: string; hours: number }[]
+        for (const e of emps) {
+          if (!printEmployeeMap[e.name]) printEmployeeMap[e.name] = { totalHours: 0, daysSet: new Set() }
+          printEmployeeMap[e.name].totalHours += e.hours
+          printEmployeeMap[e.name].daysSet.add(m.date)
         }
       } catch {}
     }
@@ -151,8 +164,21 @@ function aggregateMetrics(metrics: any[]) {
     else buckets.tenPlus++
   }
 
-  // Employee stats
+  // Employee stats (Inpak)
   const employeeStats = Object.entries(employeeMap)
+    .map(([name, data]) => ({
+      name,
+      totalHours: Math.round(data.totalHours * 10) / 10,
+      days: data.daysSet.size,
+      avgHoursPerDay: data.daysSet.size > 0
+        ? Math.round((data.totalHours / data.daysSet.size) * 10) / 10
+        : 0,
+      cost: Math.round(data.totalHours * COST_PER_HOUR),
+    }))
+    .sort((a, b) => b.totalHours - a.totalHours)
+
+  // Employee stats (Print)
+  const printEmployeeStats = Object.entries(printEmployeeMap)
     .map(([name, data]) => ({
       name,
       totalHours: Math.round(data.totalHours * 10) / 10,
@@ -193,6 +219,7 @@ function aggregateMetrics(metrics: any[]) {
       buckets,
     },
     employeeStats,
+    printEmployeeStats,
     teamStats,
     totalCost,
     shipmentsPerHour,
@@ -314,14 +341,16 @@ export async function GET(request: NextRequest) {
         costPerShipment: prev.costPerShipment,
       },
       dailyData,
-      shiftbase: current.totalInpakHours > 0 ? {
+      shiftbase: current.totalInpakHours > 0 || current.totalPrintHours > 0 ? {
         available: true,
         totalHours: current.totalInpakHours,
+        totalPrintHours: current.totalPrintHours,
         totalShipments: current.totalShipments,
         shipmentsPerHour: current.shipmentsPerHour,
         totalCost: current.totalCost,
         costPerShipment: current.costPerShipment,
         employeeStats: current.employeeStats,
+        printEmployeeStats: current.printEmployeeStats,
         teamStats: current.teamStats,
         weeklyEfficiency,
       } : { available: false },

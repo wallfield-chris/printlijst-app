@@ -73,11 +73,13 @@ interface GGStats {
   shiftbase: {
     available: boolean
     totalHours?: number
+    totalPrintHours?: number
     totalShipments?: number
     shipmentsPerHour?: number
     totalCost?: number
     costPerShipment?: number
     employeeStats?: EmployeeStat[]
+    printEmployeeStats?: EmployeeStat[]
     teamStats?: TeamStat[]
     weeklyEfficiency?: WeeklyEfficiency[]
   }
@@ -1569,6 +1571,47 @@ export default function GoedgepicktPage() {
                           <div className="w-full bg-gray-100 rounded-full h-2.5">
                             <div
                               className="h-2.5 rounded-full bg-orange-400 transition-all"
+                              style={{ width: `${barWidth}%` }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Print Team Leaderboard */}
+            {shiftbase.printEmployeeStats && shiftbase.printEmployeeStats.length > 0 && (
+              <div className="bg-white rounded-lg shadow">
+                <div className="p-6 border-b border-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-900">Print Team — Medewerkers</h3>
+                  <p className="text-sm text-gray-500 mt-1">Gewerkte uren &amp; kosten per medewerker ({stats.periodLabel})</p>
+                </div>
+                <div className="p-6">
+                  <div className="space-y-3">
+                    {shiftbase.printEmployeeStats.map((emp, i) => {
+                      const maxHours = shiftbase.printEmployeeStats![0].totalHours
+                      const barWidth = maxHours > 0 ? (emp.totalHours / maxHours) * 100 : 0
+                      return (
+                        <div key={emp.name}>
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="text-gray-700 font-medium flex items-center gap-2">
+                              {i === 0 && <span className="text-yellow-500">🥇</span>}
+                              {i === 1 && <span className="text-gray-400">🥈</span>}
+                              {i === 2 && <span className="text-amber-600">🥉</span>}
+                              {emp.name}
+                            </span>
+                            <span className="text-gray-500 text-xs">
+                              <span className="font-bold text-teal-600">{emp.totalHours}u</span>
+                              <span className="text-gray-400 ml-1">· {emp.days}d · gem. {emp.avgHoursPerDay}u/d</span>
+                              <span className="text-red-500 font-semibold ml-1">· €{emp.cost}</span>
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-2.5">
+                            <div
+                              className="h-2.5 rounded-full bg-teal-400 transition-all"
                               style={{ width: `${barWidth}%` }}
                             />
                           </div>

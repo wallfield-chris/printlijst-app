@@ -133,7 +133,8 @@ export async function GET(request: NextRequest) {
     const dayData: Record<string, {
       shipments: number; completedOrders: number; processingDays: number[]
       inpakHours: number; inpakEmployees: { name: string; hours: number }[]
-      printHours: number; allTeams: { name: string; hours: number }[]
+      printHours: number; printEmployees: { name: string; hours: number }[]
+      allTeams: { name: string; hours: number }[]
     }> = {}
 
     for (let i = 0; i < DAYS_TO_SYNC; i++) {
@@ -141,7 +142,7 @@ export async function GET(request: NextRequest) {
       d.setDate(d.getDate() + i)
       dayData[toDateStr(d)] = {
         shipments: 0, completedOrders: 0, processingDays: [],
-        inpakHours: 0, inpakEmployees: [], printHours: 0, allTeams: [],
+        inpakHours: 0, inpakEmployees: [], printHours: 0, printEmployees: [], allTeams: [],
       }
     }
 
@@ -226,6 +227,7 @@ export async function GET(request: NextRequest) {
 
         const dailyTeamHours: Record<string, Record<string, number>> = {}
         const dailyInpakEmps: Record<string, Record<string, number>> = {}
+        const dailyPrintEmps: Record<string, Record<string, number>> = {}
 
         for (const entry of entries) {
           const date = entry.Timesheet.date
@@ -243,6 +245,8 @@ export async function GET(request: NextRequest) {
           }
           if (teamId === String(PRINT_TEAM_ID)) {
             dayData[date].printHours += hours
+            if (!dailyPrintEmps[date]) dailyPrintEmps[date] = {}
+            dailyPrintEmps[date][empName] = (dailyPrintEmps[date][empName] || 0) + hours
           }
         }
         for (const [date, teams] of Object.entries(dailyTeamHours)) {
@@ -253,6 +257,11 @@ export async function GET(request: NextRequest) {
         for (const [date, emps] of Object.entries(dailyInpakEmps)) {
           if (dayData[date]) {
             dayData[date].inpakEmployees = Object.entries(emps).filter(([, hours]) => hours > 0).map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+          }
+        }
+        for (const [date, emps] of Object.entries(dailyPrintEmps)) {
+          if (dayData[date]) {
+            dayData[date].printEmployees = Object.entries(emps).filter(([, hours]) => hours > 0).map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
           }
         }
       } else {
@@ -286,10 +295,12 @@ export async function GET(request: NextRequest) {
         updateData.inpakHours = Math.round(d.inpakHours * 10) / 10
         updateData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
         updateData.printHours = Math.round(d.printHours * 10) / 10
+        updateData.printEmployees = d.printEmployees.length > 0 ? JSON.stringify(d.printEmployees) : null
         updateData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
         createData.inpakHours = Math.round(d.inpakHours * 10) / 10
         createData.inpakEmployees = d.inpakEmployees.length > 0 ? JSON.stringify(d.inpakEmployees) : null
         createData.printHours = Math.round(d.printHours * 10) / 10
+        createData.printEmployees = d.printEmployees.length > 0 ? JSON.stringify(d.printEmployees) : null
         createData.allTeamsData = d.allTeams.length > 0 ? JSON.stringify(d.allTeams) : null
       }
 

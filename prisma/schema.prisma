@@ -230,6 +230,8 @@ model DailyMetric {
 
   // Shiftbase — Print Team (team 219705)
   printHours         Float    @default(0)
+  // JSON: [{ name: string, hours: number }]
+  printEmployees     String?
 
   // Shiftbase — Alle teams
   // JSON: [{ name: string, hours: number }]
