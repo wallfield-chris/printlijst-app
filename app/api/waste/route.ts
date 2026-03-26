@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
     // Groepeer per maat
     const bySize: Record<string, number> = {}
     const byDate: Record<string, Record<string, number>> = {}
-    const byUser: Record<string, { name: string; total: number }> = {}
+    const byUser: Record<string, { name: string; total: number; bySize: Record<string, number> }> = {}
     let totalQuantity = 0
 
     for (const r of reports) {
@@ -86,8 +86,9 @@ export async function GET(request: NextRequest) {
       if (!byDate[dateKey]) byDate[dateKey] = {}
       byDate[dateKey][r.size] = (byDate[dateKey][r.size] || 0) + r.quantity
 
-      if (!byUser[r.userId]) byUser[r.userId] = { name: r.user.name, total: 0 }
+      if (!byUser[r.userId]) byUser[r.userId] = { name: r.user.name, total: 0, bySize: {} }
       byUser[r.userId].total += r.quantity
+      byUser[r.userId].bySize[r.size] = (byUser[r.userId].bySize[r.size] || 0) + r.quantity
     }
 
     return NextResponse.json({

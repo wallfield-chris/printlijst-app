@@ -16,7 +16,7 @@ interface WasteSummary {
   totalReports: number
   bySize: Record<string, number>
   byDate: Record<string, Record<string, number>>
-  byUser: Record<string, { name: string; total: number }>
+  byUser: Record<string, { name: string; total: number; bySize?: Record<string, number> }>
 }
 
 const SIZE_LABELS: Record<string, string> = {
@@ -120,7 +120,7 @@ export default function WastePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="p-8 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -145,7 +145,7 @@ export default function WastePage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <p className="text-sm font-medium text-gray-500">Totaal Afval</p>
           <p className="text-3xl font-bold text-red-600 mt-1">{summary?.totalQuantity || 0}</p>
@@ -298,13 +298,30 @@ export default function WastePage() {
               {summary?.byUser && Object.keys(summary.byUser).length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Per medewerker</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="space-y-3">
                     {Object.entries(summary.byUser)
                       .sort(([, a], [, b]) => b.total - a.total)
                       .map(([userId, data]) => (
-                        <div key={userId} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
-                          <span className="font-medium text-gray-800">{data.name}</span>
-                          <span className="text-sm font-semibold text-red-600">{data.total} stuks</span>
+                        <div key={userId} className="bg-gray-50 rounded-lg px-4 py-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-gray-800">{data.name}</span>
+                            <span className="text-sm font-semibold text-red-600">{data.total} stuks</span>
+                          </div>
+                          {data.bySize && Object.keys(data.bySize).length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(data.bySize)
+                                .sort(([, a], [, b]) => b - a)
+                                .map(([size, qty]) => (
+                                  <span
+                                    key={size}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white"
+                                    style={{ backgroundColor: SIZE_COLORS[size] || "#6B7280" }}
+                                  >
+                                    {SIZE_LABELS[size] || size}: {qty}
+                                  </span>
+                                ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                   </div>
