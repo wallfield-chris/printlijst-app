@@ -61,6 +61,7 @@ interface PrintDataResponse {
   dailySummary: DailySummary[]
   shiftbasePrintHours: number
   shiftbasePrintHoursByDate: Record<string, number>
+  untaggedByDate?: Record<string, { sku: string | null; tags: string | null; productName: string | null; quantity: number }[]>
 }
 
 function formatMinutes(min: number): string {
@@ -696,6 +697,24 @@ export default function PrintDataPage() {
                         ) : (
                           <p className="text-sm text-gray-500">Geen format-data beschikbaar voor deze dag.</p>
                         )}
+                        {/* Onherkende jobs (zonder format-tag) */}
+                        {data?.untaggedByDate?.[selectedChartDay]?.length ? (
+                          <div className="mt-3 pt-3 border-t border-orange-200">
+                            <p className="text-sm font-medium text-orange-700 mb-2">
+                              ⚠️ {data.untaggedByDate[selectedChartDay].length} job(s) zonder formaat-tag:
+                            </p>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {data.untaggedByDate[selectedChartDay].map((j, i) => (
+                                <div key={i} className="text-xs bg-orange-50 rounded px-2 py-1 flex gap-2">
+                                  <span className="text-gray-600 font-mono">{j.sku || "—"}</span>
+                                  <span className="text-gray-500 truncate">{j.productName || ""}</span>
+                                  <span className="text-gray-400 ml-auto">×{j.quantity}</span>
+                                  {j.tags && <span className="text-orange-600">tags: {j.tags}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                         {shiftMin > 0 && (
                           <div className="mt-3 pt-3 border-t border-blue-200 text-sm text-gray-600">
                             Shiftbase uren: <span className="font-medium text-teal-700">{formatMinutes(shiftMin)}</span>
@@ -787,6 +806,14 @@ export default function PrintDataPage() {
                       ) : (
                         <p className="text-sm text-gray-500">Geen format-data voor deze dag.</p>
                       )}
+                      {/* Onherkende jobs */}
+                      {data?.untaggedByDate?.[selectedChartDay]?.length ? (
+                        <div className="mt-2">
+                          <p className="text-xs text-orange-600 font-medium">
+                            ⚠️ {data.untaggedByDate[selectedChartDay].length} job(s) zonder formaat-tag
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   )
                 })()}

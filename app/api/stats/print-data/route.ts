@@ -92,18 +92,23 @@ export async function GET(request: NextRequest) {
     const to = endDate ? new Date(endDate + "T23:59:59") : now
 
     // Haal alle voltooide jobs op in de periode
+    const whereClause: any = {
+      printStatus: { in: ["completed", "pushed"] },
+      completedAt: { gte: from, lte: to },
+    }
+    if (operatorId && operatorId !== "all") {
+      whereClause.completedBy = operatorId
+    }
     const jobs = await prisma.printJob.findMany({
-      where: {
-        printStatus: { in: ["completed", "pushed"] },
-        completedAt: { gte: from, lte: to },
-        completedBy: operatorId && operatorId !== "all" ? operatorId : { not: null },
-      },
+      where: whereClause,
       select: {
         id: true,
         completedAt: true,
         completedBy: true,
         quantity: true,
         tags: true,
+        sku: true,
+        productName: true,
       },
       orderBy: { completedAt: "asc" },
     })
@@ -114,23 +119,32 @@ export async function GET(request: NextRequest) {
       select: { id: true, name: true, email: true },
     })
     const operatorMap = Object.fromEntries(operators.map(o => [o.id, o.name || o.email || "Onbekend"]))
+    operatorMap["__unknown__"] = "Onbekend"
 
     // Groepeer per operator per dag
     const grouped: Record<string, Record<string, CompletionEvent[]>> = {}
+    // Track jobs zonder format-tag per dag (voor diagnose)
+    const untaggedByDate: Record<string, { sku: string | null; tags: string | null; productName: string | null; quantity: number }[]> = {}
     for (const job of jobs) {
-      if (!job.completedAt || !job.completedBy) continue
-      const opId = job.completedBy
+      if (!job.completedAt) continue
+      const opId = job.completedBy || "__unknown__"
       const dateKey = `${job.completedAt.getFullYear()}-${String(job.completedAt.getMonth() + 1).padStart(2, "0")}-${String(job.completedAt.getDate()).padStart(2, "0")}`
 
       if (!grouped[opId]) grouped[opId] = {}
       if (!grouped[opId][dateKey]) grouped[opId][dateKey] = []
+
+      const format = getJobFormat(job.tags)
+      if (!format) {
+        if (!untaggedByDate[dateKey]) untaggedByDate[dateKey] = []
+        untaggedByDate[dateKey].push({ sku: job.sku, tags: job.tags, productName: job.productName, quantity: job.quantity })
+      }
 
       grouped[opId][dateKey].push({
         id: job.id,
         completedAt: job.completedAt,
         quantity: job.quantity,
         tags: job.tags,
-        format: getJobFormat(job.tags),
+        format,
         m2: getJobM2(job.tags) * job.quantity,
       })
     }
@@ -287,6 +301,7 @@ export async function GET(request: NextRequest) {
       dailySummary: dailySummaryArr,
       shiftbasePrintHours,
       shiftbasePrintHoursByDate,
+      untaggedByDate,
     })
   } catch (error) {
     console.error("Error in print-data stats:", error)
