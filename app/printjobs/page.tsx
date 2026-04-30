@@ -180,10 +180,10 @@ export default function PrintJobsPage() {
       }
     }
 
-    // Direct eerste poll + check + sync
+    // Direct eerste poll; check en sync worden vertraagd zodat de pagina eerst kan laden
     pollForUpdates()
-    checkCompleted()
-    autoSync()
+    const initialCheckTimeout = setTimeout(checkCompleted, 5_000)
+    const initialSyncTimeout = setTimeout(autoSync, 10_000)
 
     const pollInterval = setInterval(pollForUpdates, 5_000)        // elke 5 seconden
     const checkInterval = setInterval(checkCompleted, 30_000)      // elke 30 seconden
@@ -192,6 +192,8 @@ export default function PrintJobsPage() {
       clearInterval(pollInterval)
       clearInterval(checkInterval)
       clearInterval(syncInterval)
+      clearTimeout(initialCheckTimeout)
+      clearTimeout(initialSyncTimeout)
     }
   }, [session])
 
@@ -529,11 +531,12 @@ export default function PrintJobsPage() {
     const filteredJobs = getFilteredJobs()
     const currentIndex = filteredJobs.findIndex(job => job.id === selectedJob.id)
     
+    // Zoek de volgende niet-voltooide job (sla completed/missingFile jobs over)
+    const nextJob = filteredJobs.slice(currentIndex + 1)
+      .find(job => job.printStatus !== 'completed' && !job.missingFile)
+    
     // Update status to completed
     await updateJobStatus(selectedJob.id, "completed")
-    
-    // Find next job in the same filtered list
-    const nextJob = filteredJobs[currentIndex + 1]
     
     if (nextJob) {
       setSelectedJob(nextJob)
@@ -564,13 +567,13 @@ export default function PrintJobsPage() {
         throw new Error("Fout bij markeren als missing file")
       }
 
-      // Fetch updated jobs and move to next in same filtered list
+      // Zoek de volgende niet-voltooide job voor navigatie (sla completed/missingFile over)
       const filteredJobs = getFilteredJobs()
       const currentIndex = filteredJobs.findIndex(job => job.id === selectedJob.id)
-      
+      const nextJob = filteredJobs.slice(currentIndex + 1)
+        .find(job => job.printStatus !== 'completed' && !job.missingFile)
+
       await fetchPrintJobs()
-      
-      const nextJob = filteredJobs[currentIndex + 1]
       
       if (nextJob) {
         setSelectedJob(nextJob)
@@ -622,22 +625,34 @@ export default function PrintJobsPage() {
   const handlePushToStock = async () => {
     if (!selectedLocation) return
     const activeView = listViews.find((v) => v.id === activeTab)
-    if (!activeView) return
+    if (!activeView) {
+      setPushResult({ pushed: 0, failed: 0, message: "Selecteer een specifieke tab (niet 'Alle') om te pushen" })
+      return
+    }
     const tags = activeView.tags.split(",").filter((t) => t.trim())
     try {
       setPushing(true)
-      const res = await fetch("/api/printjobs/push-to-stock", {
+      const res = await fetch("/api/printjobs/push-to-stock?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags, locationName: selectedLocation?.name, locationUuid: selectedLocation?.uuid }),
       })
-      const data = await res.json()
-      setPushResult({ pushed: data.pushed || 0, failed: data.failed || 0, message: data.message || "", failedProducts: data.failedProducts || [] })
-      if (data.pushed > 0) {
-        await fetchPrintJobs()
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        setPushResult({ pushed: 0, failed: 0, message: errData.error || `Push mislukt (HTTP ${res.status})` })
+        return
+      }
+      if (res.body) {
+        const result = await readSSEStream(res, () => {})
+        if (result) {
+          setPushResult({ pushed: result.pushed || 0, failed: result.failed || 0, message: result.message || "", failedProducts: result.failedProducts || [] })
+          if (result.pushed > 0) {
+            await fetchPrintJobs()
+          }
+        }
       }
     } catch (err) {
-      setPushResult({ pushed: 0, failed: 0, message: "Fout bij pushen naar voorraad" })
+      setPushResult({ pushed: 0, failed: 0, message: "Fout bij pushen naar voorraad — probeer opnieuw" })
     } finally {
       setPushing(false)
     }

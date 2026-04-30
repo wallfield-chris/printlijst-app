@@ -62,6 +62,11 @@ export async function GET(request: NextRequest) {
     const to = searchParams.get("to")
     const missingFile = searchParams.get("missingFile")
 
+    // Verouderde orders: niet tonen als ze ouder zijn dan 120 dagen en nooit een statusupdate kregen.
+    // Dit voorkomt dat oude backorders uit bijv. november 2025 de lijst blijven vervuilen.
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - 120)
+
     const where: any = {
       // Sluit 'pushed' jobs uit (die zijn al naar voorraad gepusht)
       // Voltooide jobs (printStatus=completed) tonen we ALTIJD, ook als de order
@@ -81,7 +86,9 @@ export async function GET(request: NextRequest) {
                 { printStatus: { not: 'completed' } },
                 {
                   OR: [
-                    { orderStatus: null },
+                    // Geen statusupdate: alleen recente orders (max 120 dagen) — oudere zijn verouderd
+                    { AND: [{ orderStatus: null }, { receivedAt: { gte: cutoffDate } }] },
+                    // Bekende actieve status: altijd tonen
                     { orderStatus: { notIn: ['completed', 'cancelled', 'shipped'] } },
                   ],
                 },
