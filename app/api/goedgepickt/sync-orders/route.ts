@@ -141,9 +141,9 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     // === Haal orders op uit GoedGepickt ===
     const api = new GoedGepicktAPI(apiKeySetting.value)
     
-    // Bij reset: haal alle backorder orders op (breed datumbereik)
+    // Bij reset: laatste 90 dagen (ouder dan 90 dagen zijn vrijwel nooit nog backorder)
     // Bij normale sync: laatste 30 dagen
-    const daysBack = resetMode ? 365 : 30
+    const daysBack = resetMode ? 90 : 30
     const createdAfter = new Date()
     createdAfter.setDate(createdAfter.getDate() - daysBack)
     const createdAfterStr = `${createdAfter.getFullYear()}-${String(createdAfter.getMonth() + 1).padStart(2, "0")}-${String(createdAfter.getDate()).padStart(2, "0")}`
@@ -172,19 +172,31 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     console.log(`📊 Found ${paginationInfo?.totalItems || firstPageOrders.length} orders across ${totalPages} pages`)
     send({ type: "progress", step: 2, totalSteps: 5, message: "GoedGepickt orders ophalen...", detail: `Pagina 1 van ~${totalPages}` })
 
-    // Haal alle pagina's op
-    const allOrders: any[] = []
-    for (let page = totalPages; page >= 1; page--) {
-      if (page === 1) {
-        allOrders.push(...firstPageOrders)
-        continue
-      }
-      send({ type: "progress", step: 2, totalSteps: 5, message: "GoedGepickt orders ophalen...", detail: `Pagina ${totalPages - page + 1} van ~${totalPages}` })
-      try {
-        const pageOrders = await api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page })
+    // Haal alle pagina's op in PARALLELLE batches (5 tegelijk) i.p.v. sequentieel
+    const BATCH_SIZE = 5
+    const allOrders: any[] = [...firstPageOrders]
+    const remainingPages: number[] = []
+    for (let p = 2; p <= totalPages; p++) remainingPages.push(p)
+
+    for (let i = 0; i < remainingPages.length; i += BATCH_SIZE) {
+      const batch = remainingPages.slice(i, i + BATCH_SIZE)
+      const fetched = i + batch.length
+      send({
+        type: "progress", step: 2, totalSteps: 5,
+        message: "GoedGepickt orders ophalen...",
+        detail: `Pagina ${fetched} van ~${totalPages}`,
+      })
+      const batchResults = await Promise.all(
+        batch.map(page =>
+          api.getOrders({ orderstatus: "backorder", createdAfter: createdAfterStr, page }).catch(() => [])
+        )
+      )
+      for (const pageOrders of batchResults) {
         if (pageOrders.length > 0) allOrders.push(...pageOrders)
-      } catch (err) {
-        console.error(`⚠️ Fout bij pagina ${page}:`, err)
+      }
+      // Korte pauze om GoedGepickt rate limit (150 req/min) te respecteren
+      if (i + BATCH_SIZE < remainingPages.length) {
+        await new Promise(r => setTimeout(r, 400))
       }
     }
 

@@ -866,13 +866,6 @@ export default function PrintJobsPage() {
             >
               🗑️ Waste / Afval melden
             </button>
-            <button
-              onClick={refreshWithStatusSync}
-              disabled={refreshing}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {refreshing ? "⏳ Statussen ophalen..." : "↻ Vernieuwen"}
-            </button>
             <div className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-md bg-gray-100 select-none" title={isLive ? "Real-time updates actief — elke 10 seconden" : "Verbinding verbroken"}>
               <span className={`inline-block w-2 h-2 rounded-full ${isLive ? (newOrderFlash ? "bg-green-400 animate-ping" : "bg-green-500") : "bg-red-400"}`} />
               <span className={`font-medium ${isLive ? "text-green-700" : "text-red-600"}`}>
