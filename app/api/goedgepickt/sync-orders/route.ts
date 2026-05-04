@@ -206,30 +206,32 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
     send({ type: "progress", step: 3, totalSteps: 5, message: "Orders verwerken...", detail: `${orders.length} backorders gevonden` })
 
     // === Dedup lookup: bestaande actieve jobs (inclusief stock_covered om re-import te voorkomen) ===
-    // Voor completed/pushed jobs: als de order opnieuw backorder is, resetten we die naar pending
+    // BELANGRIJK: alleen 'pushed' jobs mogen opnieuw in de wachtrij gezet worden.
+    // 'completed' jobs (geprint maar nog NIET gepusht) worden NOOIT gereset — die moeten
+    // eerst naar voorraad gepusht worden.
     const existingJobKeys = new Set<string>()
-    const completedPushedJobMap = new Map<string, string>() // key → job id (alleen completed/pushed)
+    const pushedJobMap = new Map<string, string>() // key → job id (alleen pushed — NIET completed!)
     if (!resetMode) {
       const existingJobs = await prisma.printJob.findMany({
         where: { printStatus: { in: ["pending", "in_progress", "stock_covered", "completed", "pushed"] } },
         select: { id: true, orderUuid: true, productUuid: true, sku: true, productName: true, printStatus: true },
       })
       for (const job of existingJobs) {
-        const isCompletedOrPushed = job.printStatus === "completed" || job.printStatus === "pushed"
+        const isPushed = job.printStatus === "pushed"
         if (job.orderUuid && job.productUuid) {
           const key = `${job.orderUuid}::${job.productUuid}`
           existingJobKeys.add(key)
-          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+          if (isPushed) pushedJobMap.set(key, job.id)
         }
         if (job.orderUuid && job.sku) {
           const key = `${job.orderUuid}::sku::${job.sku}`
           existingJobKeys.add(key)
-          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+          if (isPushed) pushedJobMap.set(key, job.id)
         }
         if (job.orderUuid && job.productName) {
           const key = `${job.orderUuid}::name::${job.productName}`
           existingJobKeys.add(key)
-          if (isCompletedOrPushed) completedPushedJobMap.set(key, job.id)
+          if (isPushed) pushedJobMap.set(key, job.id)
         }
       }
     }
@@ -339,12 +341,12 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
             : existingJobKeys.has(dupKey3) ? dupKey3 : null
 
           if (matchedKey) {
-            // Check of het een completed/pushed job is die opnieuw geprint moet worden
-            const existingJobId = completedPushedJobMap.get(matchedKey)
-            if (existingJobId && !requeuedJobIds.has(existingJobId)) {
-              // Reset deze job naar pending zodat hij opnieuw geprint wordt
+            // Alleen PUSHED jobs mogen opnieuw in de wachtrij — completed (geprint, niet gepusht) nooit aanraken.
+            const pushedJobId = pushedJobMap.get(matchedKey)
+            if (pushedJobId && !requeuedJobIds.has(pushedJobId)) {
+              // Job was al gepusht naar voorraad maar order staat nog steeds backorder → opnieuw printen
               await prisma.printJob.update({
-                where: { id: existingJobId },
+                where: { id: pushedJobId },
                 data: {
                   printStatus: "pending",
                   completedAt: null,
@@ -354,9 +356,9 @@ async function runSyncLogic(resetMode: boolean, send: SendFn = noopSend) {
                   backorder: true,
                 },
               })
-              requeuedJobIds.add(existingJobId)
+              requeuedJobIds.add(pushedJobId)
               totalRequeued++
-              console.log(`🔄 Job ${existingJobId} gereset naar pending (order ${order.externalDisplayId || order.uuid} opnieuw backorder)`)
+              console.log(`🔄 Job ${pushedJobId} gereset naar pending (order ${order.externalDisplayId || order.uuid} opnieuw backorder na push)`)
             } else {
               totalDuplicates++
             }
